@@ -1,0 +1,13 @@
+[package]
+name = "bugreport-insight-anr"
+version.workspace = true
+edition.workspace = true
+description = "bugreport-insight subcommand: Application Not Responding (ANR) insight"
+
+[[bin]]
+name = "bugreport-insight-anr"
+path = "src/main.rs"
+
+[dependencies]
+bugreport-insight-core.workspace = true
+bugreport-insight-subcommand-support.workspace = true

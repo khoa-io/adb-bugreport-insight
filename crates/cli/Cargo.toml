@@ -1,0 +1,16 @@
+[package]
+name = "bugreport-insight"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bugreport-insight"
+path = "src/main.rs"
+
+[dependencies]
+bugreport-insight-anr.workspace = true
+bugreport-insight-core.workspace = true
+bugreport-insight-cpu.workspace = true
+bugreport-insight-memory.workspace = true
+bugreport-insight-stacktrace.workspace = true
+clap.workspace = true

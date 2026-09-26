@@ -1,0 +1,4 @@
+/target/
+/.bugreport-*/
+/.BUGREPORT/
+.DS_Store

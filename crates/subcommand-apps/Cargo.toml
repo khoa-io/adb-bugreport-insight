@@ -1,0 +1,13 @@
+[package]
+name = "bugreport-insight-apps"
+version.workspace = true
+edition.workspace = true
+description = "bugreport-insight subcommand: installed/running app inventory (PID, package, data path, installed path)"
+
+[[bin]]
+name = "bugreport-insight-apps"
+path = "src/main.rs"
+
+[dependencies]
+bugreport-insight-core.workspace = true
+bugreport-insight-subcommand-support.workspace = true

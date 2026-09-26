@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/cli",
+    "crates/subcommand-support",
+    "crates/subcommand-anr",
+    "crates/subcommand-apps",
+    "crates/subcommand-stacktrace",
+    "crates/subcommand-memory",
+    "crates/subcommand-cpu",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# Dependencies shared by two or more crates, declared once here so every crate's manifest just
+# references `<name>.workspace = true` instead of repeating a version (and, for in-workspace
+# crates, a relative path) in each `Cargo.toml`.
+[workspace.dependencies]
+bugreport-insight-core = { path = "crates/core" }
+bugreport-insight-subcommand-support = { path = "crates/subcommand-support" }
+bugreport-insight-anr = { path = "crates/subcommand-anr" }
+bugreport-insight-apps = { path = "crates/subcommand-apps" }
+bugreport-insight-stacktrace = { path = "crates/subcommand-stacktrace" }
+bugreport-insight-memory = { path = "crates/subcommand-memory" }
+bugreport-insight-cpu = { path = "crates/subcommand-cpu" }
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
