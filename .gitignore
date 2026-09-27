@@ -1,4 +1,5 @@
 /target/
+/tmp/
 /.bugreport-*/
 /.BUGREPORT/
 .DS_Store
