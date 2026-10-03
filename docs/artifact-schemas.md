@@ -119,11 +119,16 @@ top-level keys**, in this order:
 
 ```
 schema_version, artifact, generator, source, capture, scope, collection,
-counts, severity_summary, freshness_summary, negative_evidence, findings, notes
+counts, severity_summary, freshness_summary, negative_evidence, evidence_gaps,
+findings, notes
 ```
 
 `README.md` is Markdown and has no envelope; it references these structures but does not
 serialise them.
+
+`system.json` is the one artifact that owns `capture`. In the other five, `capture` is
+**replaced** by `capture_ref`, a pointer to the canonical object ([§2.9](#29-null-absent-and-raw)
+rule 6). Both forms are counted in the thirteen, so every artifact has the same key count.
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -131,13 +136,14 @@ serialise them.
 | `artifact` | enum | yes | One of `system`, `apps`, `anr`, `crashes`, `memory`, `cpu`. Identifies which artifact this is. |
 | `generator` | object | yes | Tool provenance. See [§2.1.1](#211-generator). |
 | `source` | object | yes | Identity of the archive read. See [§2.1.2](#212-source). |
-| `capture` | object | yes | The capture instant and its context. See [§2.1.3](#213-capture). |
+| `capture` | object | yes | The capture instant and its context. `system.json` only; every other artifact carries `capture_ref`. See [§2.1.3](#213-capture). |
 | `scope` | object | yes | What was and was not searched. See [§2.1.4](#214-scope). |
 | `collection` | object | yes | What the collector itself did, so "is this number self-inflicted?" is answerable. See [§2.1.5](#215-collection). |
 | `counts` | object | yes | Match blocks. See [§2.3](#23-counts-are-match-blocks). |
 | `severity_summary` | object | yes | Tally by severity. Must sum to `findings.length`. |
 | `freshness_summary` | object | yes | Tally by freshness state. Must sum to `findings.length`. |
 | `negative_evidence` | array | yes | Statements of absence, each with an authority level. See [§2.1.6](#216-negative_evidence). |
+| `evidence_gaps` | array | yes | Fields that could not be produced, each with a machine-readable `reason` code. See [§2.1.7](#217-evidence_gaps). |
 | `findings` | array | yes | The payload. May be empty; see below. |
 | `notes` | array of string | yes | Free-text caveats, each prefixed `"<CODE>: <text>"`. |
 
@@ -150,15 +156,15 @@ fields, plus whatever its artifact defines:
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `id` | string | yes | `<artifact_prefix>-<4-digit ordinal>`, assigned in archive order so ids are stable across runs on the same archive. Prefix: `anr`, `crash`, `mem`, `cpu`, `app`, `sys`. |
+| `id` | string | yes | `<artifact_prefix>-<4-digit ordinal>`, assigned in archive order so ids are stable across runs on the same archive. Prefix: `anr`, `crash`, `mem`, `cpu`, `app`, `sys`. Ids start at `0001`. |
 | `kind` | string enum | yes | A noun for a record type, never a symptom. Artifact-specific; the closed set is listed in each artifact's entry. |
-| `title` | string | yes | One line, ≤ 200 characters, no newline, no unescaped control character. |
-| `severity` | enum | yes | See [§2.6](#26-severity). |
+| `title` | string | yes | One line, ≤ 200 characters, no newline, no unescaped control character. **Removed from JSON artifacts.** A title is prose that summarises a finding, and prose is what `README.md` §4.1 is for. `README.md` §3 synthesises titles from `kind`, `severity`, `metrics`, and the evidence excerpt; no JSON artifact carries one, so a title can never contradict the numbers beside it. |
+| `severity` | enum | yes | See [§2.6](#26-severity). Produced by the artifact's published `severity_rule`. |
 | `unconstrained_severity` | enum | yes | The severity this finding would have absent the freshness cap. Always present. Equals `severity` when no cap applied. |
-| `confidence` | enum | yes | `confirmed` (a validated record), `inferred` (a derived conclusion), `reported` (a third-party assertion we did not verify). `reported` **must** be used when the only evidence is an event-log line. |
+| `confidence` | enum | yes | `confirmed` (a validated record), `inferred` (a derived conclusion), `reported` (a third-party assertion we did not verify). `reported` **must** be used when the only evidence is an event-log line, and **must** be used when the only evidence is an `archive_absence` entry — an absence can never be `confirmed`. |
 | `process_key` | string \| null | yes | See [§2.8](#28-identity). `null` only when the finding is genuinely device-wide. |
 | `event_time` | string \| null | yes | When the **condition** happened. Distinct from when the evidence was captured. |
-| `attributes` | object | yes | Record-type-specific scalars. Every numeric key carries a unit suffix. |
+| `attributes` | object | yes | Record-type-specific **scalars only** — string, integer, number, or boolean. A nested object or array here is a schema violation; anything structured belongs in `metrics`. |
 | `metrics` | object | yes | The measurements that justified the severity. A `high` or `critical` finding with empty `metrics` is a schema violation. |
 | `evidence` | object | yes | Exactly one. See [§2.7](#27-evidence). |
 | `corroborating_evidence` | array | yes | May be empty. See [§2.7](#27-corroborating_evidence). |
@@ -221,7 +227,7 @@ a derived value that appears twice will eventually appear twice with two differe
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
 | `captured_at` | string (RFC 3339, explicit offset) \| null | yes | The archive's capture instant. `null` if no clock is derivable — a legitimate outcome, not an error. | `== dumpstate:` banner, `dumpstate.cpp:802-805` |
-| `captured_at_time_base` | enum | yes | Which clock supplied `captured_at`. See [§2.4](#24-provenance). | — |
+| `captured_at_time_base` | enum \| null | yes | Which clock supplied `captured_at`. `null` when `captured_at` is `null` — a clock cannot be named when no clock was found. See [§2.4](#24-provenance). | — |
 | `uptime_at_capture_seconds` | integer \| null | yes | Device uptime in seconds at capture. Never inferred from logcat timestamps. | `------ UPTIME (uptime) ------`, `dumpstate.cpp:1687`; header line `dumpstate.cpp:828-830` |
 | `log_window` | object | yes | The archive's logcat window. See below. | `logprint.cpp:1552-1554` |
 | `boot` | object | yes | Boot-instant derivation. See below. | — |
@@ -235,7 +241,7 @@ a derived value that appears twice will eventually appear twice with two differe
 | `first_line_at` / `last_line_at` | string | yes | Wall-clock stamp of the first/last parseable logcat line, `MM-DD HH:MM:SS.mmm`. Year-less; see [§2.9](#29-null-absent-and-raw). |
 | `duration_seconds` | number | yes | `last − first`. |
 | `is_contiguous` | boolean | yes | `false` when a second, `-T`-bounded `SYSTEM LOG` follows. |
-| `overlaps_boot_instant` | boolean | yes | `true` when `first_line_at` precedes the derived boot instant. Logcat is stamped from the kernel wall clock before `SystemClock.uptimeMillis()` reaches 0, while AMS relative times are uptime-based. **Log timestamps and AMS relative times are not the same clock.** |
+| `first_line_minus_boot_seconds` | number \| null | yes | `first_line_at` minus `boot.at`, in seconds. **Publish the measured difference, not a boolean verdict about it.** The sign answers "does the log window start before boot" — but a boolean over it flips whenever the margin falls inside `boot.uncertainty_seconds`, so the boolean cannot be computed honestly and must not be in the schema. `null` when `boot.at` is `null`. |
 | `truncated` | boolean \| null | yes | `null` — dumpstate records no logcat truncation flag. |
 
 `capture.boot`:
@@ -271,37 +277,35 @@ Built from dumpstate's own per-section duration footers — the
 `dumpstate.cpp:3831-3835`. Same schema in every artifact.
 
 The question this answers is narrow and important: **did the collection process change the
-number it is reporting?** In the reference archive, two sections walk every process's page
-tables — `BUGREPORT_PROCDUMP` (5.187 s) and `DUMPSYS HIGH meminfo` (3.525 s) — and swap
-usage rises from 18,176 K to 230,912 K across exactly that interval. A naive schema that
-diffs two swap snapshots reports ~207 MiB of "device thrashing" that is entirely the
-collector.
+number it is reporting?** A schema that diffs two swap snapshots must be able to show the
+reader whether any page-scanning section ran inside the interval between those snapshots, so
+that a large delta is not read as device behaviour by default.
+
+**What this section does not do is decide.** There is no `assessment` field, and there is no
+statement-order field. Both would require claiming that a delta was *caused* by the collector,
+and the archive records swap values and section durations with no per-process page-fault
+accounting connecting them. The measurements are published; the causal reading belongs in
+`README.md` §4.1, where it is explicitly labelled as prose.
+
+> **There is no statement-order field because dumpstate has none.** It runs sections on a
+> thread pool (`dumpstate_log.txt` records `Start thread pool:1` … `shutdown thread pool` …
+> `Start thread pool:3`), and the logcat `Duration of 'TITLE'` lines show sections whose
+> intervals overlap. Archive order is **completion** order under parallelism. Any field
+> claiming to recover statement order is unproducible from any archive.
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `page_scanning_sections` | array of object | yes | Sections known to walk process page tables, with name, line range, and duration. |
-| `page_scanning_total_ms` | number | yes | Sum of the above. |
-| `swap_timeline` | array of object | yes | Ordered swap snapshots across the dump. Every delta is an **edge between two identified nodes**; there is no scalar a consumer can diff naively. |
+| `page_scanning_sections` | array of object | yes | Sections whose body contains a per-PID row set carrying a swap column, or a `/sys/block/zram*/stat` block. Membership is decided by **what the section prints**, never by AOSP source knowledge; each entry carries `name`, `line_start`, `line_end`, `duration_ms`. |
+| `page_scanning_total_ms` | number | yes | Sum of the above, from the per-section duration footers. |
+| `swap_timeline` | array of object | yes | Swap readings across the dump, **ordered by `line_start`**. Every delta is an **edge between two identified nodes**; there is no scalar a consumer can diff naively. Each entry carries `line_start` pointing at the payload line the value was read from. |
 | `swap_growth_kb` | integer \| null | yes | `last − first` across the timeline. `null` if fewer than two usable points. |
-| `self_inflicted_growth_kb` | integer \| null | yes | Growth attributable to `page_scanning_total_ms`. |
-| `assessment` | enum | yes | `collector`, `device`, `indeterminate`, or `no_growth_observed`. Computed, not asserted. |
-| `assessment_basis` | string | yes | One sentence naming the sections, durations, and negative evidence. |
+| `page_scanning_ms_in_interval` | number \| null | yes | Sum of the page-scanning section durations whose spans overlap the interval between the first and last timeline reading. **A measured overlap, not an attribution.** `null` when `swap_growth_kb` is `null`. |
 
-The rule, stated in the artifact:
-
-```
-collector          ⇔  swap_growth_kb > 0
-                     ∧ the interval containing the growth overlaps ≥ 1 page-scanning section
-                     ∧ kill_evidence shows no reaction (no lmkd kill, /proc/vmstat oom_kill == 0)
-device             ⇔  swap_growth_kb > 0 ∧ there IS a reaction
-indeterminate      ⇔  swap_timeline has < 2 usable points
-no_growth_observed ⇔  swap_growth_kb <= 0
-```
-
-`cpu.json` adds one field: `cpu_clean_channels` / `cpu_perturbed_channels`, naming which
-channels were measured *before* the dump and which *during* it, plus a `mechanism` sentence.
-This is the opposite case from `memory.json` and it is why the field is in the shared
-convention rather than in one artifact.
+Whether overlapping page scanning *explains* the delta is a claim about causation. An artifact
+that made the claim would need per-process page-fault data the archive does not contain, so the
+claim is not a field. Where a collector's influence is nonetheless directly checkable — the
+`dumpsys cpuinfo` window closing before the dump began — it is carried per-provenance as
+`collector_perturbed`, which §2.4 already requires.
 
 #### 2.1.6 `negative_evidence`
 
@@ -311,7 +315,7 @@ A required array. Each entry:
 | --- | --- | --- | --- |
 | `scope` | string | yes | What the statement covers: a channel, a section, an archive-wide search. |
 | `statement` | string | yes | The verbatim platform string where one exists, or the precise description of what was searched. |
-| `source` | string \| null | yes | Where to see it — an archive locator. |
+| `source` | object \| null | yes | Where to see it — an archive locator (`archive_path`, `section_title`, `section_ordinal`, `line_start`, `line_end`). `null` only for an archive-wide search, where no single span exists. |
 | `authority` | enum | yes | See below. |
 
 `authority` is either:
@@ -327,6 +331,52 @@ reference archive contains 65 ANR trace files, all 126 days old, from a boot tha
 before this one — and simultaneously two dumpsys sections asserting in so many words that
 no ANR has occurred since boot. Both facts are true. Only an artifact that carries both can
 be read correctly.
+
+#### 2.1.7 `evidence_gaps`
+
+A required array in **every** artifact. It is the mechanism that lets a schema declare a limit
+instead of inventing a value, and it is required precisely because its absence is what makes
+fabrication attractive.
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `field` | string | yes | Dotted path of the field or object the gap concerns. |
+| `reason` | enum | yes | A code from the closed table below. |
+| `detail` | string \| null | yes | Human-readable explanation. **Never load-bearing** — a consumer must not have to parse it, and a validator must never depend on its wording. |
+
+`reason` is a **closed vocabulary**, not prose:
+
+| `reason` | Meaning |
+| --- | --- |
+| `NOT_PRINNED` | The source field exists in the platform but the archive does not print a value for it. |
+| `SECTION_ABSENT` | The section that would carry this was not in the archive. |
+| `SECTION_FAILED` | The section is present but its command failed or timed out. |
+| `REGION_EXCLUDED` | The section was read but the relevant span was outside the read region. |
+| `PARSE_INDETERMINATE` | The bytes are present but do not determine the value. |
+| `AMBIGUOUS_SOURCE` | Two or more archive sources disagree and nothing in the archive adjudicates. |
+| `UNVERIFIABLE` | The value would require knowledge outside the archive — platform source, build configuration, or live device state. |
+
+**The distinction that matters:** `evidence_gaps[]` is about *the archive*. It says "these bytes do
+not determine this value". It is **not** about the analyzer. A field the tool failed to parse is
+a bug in the tool, fixed in the tool; it does not become a gap in the artifact. And `UNVERIFIABLE`
+is a legitimate, frequent value: a schema that has no `UNVERIFIABLE` entries has usually hidden a
+platform-knowledge assumption in a field instead.
+
+> **An empty `evidence_gaps` array is a claim.** It asserts that every field this artifact
+> publishes was derivable from this archive. That is almost never true, so an empty array should
+> be as rare as a `findings: []` with no explanation.
+
+#### 2.1.8 `notes`
+
+Free-text caveats, each prefixed `"<CODE>: <text>"`. Notes are the escape hatch for a caveat
+that does not attach to any one field.
+
+`notes[]` is **not** where platform knowledge should move to. A note saying "the tombstone
+index is a ring counter, so `tombstone_00` is not the newest file" is a statement about AOSP
+that the tool cannot verify per archive; it belongs in this specification's prose, where a
+reader can see it once, rather than in every artifact as an un-actionable string. Notes carry
+facts about *this run* — a truncation was hit, a clock skew was seen, a duplicate rendering was
+found.
 
 ### 2.2 Section status enum
 
@@ -386,8 +436,8 @@ counts.<name>_hits = {
 | `raw_count` | integer | yes | Matching lines, whole-archive, no section filter. |
 | `matched_evidence` | integer | yes | Hits that became findings. |
 | `suppressed_noise` | integer | yes | `raw_count − matched_evidence`, minus anything the platform never emitted. |
-| `not_emitted_by_platform` | integer | yes | The evidence channel does not exist in this archive. Distinct from "searched and found nothing". |
-| `suppressed_noise_note` | string | yes when `suppressed_noise > 0` | Why the residue is not a finding. |
+| `not_emitted_by_platform` | integer | yes | **This evidence channel does not exist in the archive** — no section, no tag, no entry. Distinct from "searched and found nothing". This one is archive-observable (the section header is absent), so it stays. **What does not stay is any assertion about *why* the platform omitted it**, which is AOSP behaviour and belongs in `evidence_gaps[]` with `reason: UNVERIFIABLE`. |
+| `suppressed_noise_note` | string | yes when `suppressed_noise > 0` | Why the residue is not a finding. **Restricted to facts a reader can re-check against the same bytes** — which match, which did not, and the shape of the difference. It must not assert a cause ("the platform never emits", "this is only boot noise") unless the cause is visible in the archive, in which case the *count* belongs in `suppressed_noise` and the explanation belongs in `evidence_gaps[]`. |
 | `coverage` | object | yes | See below. |
 | `regions[]` | array | yes | Every contiguous run of matching lines, with its section. |
 
@@ -443,7 +493,7 @@ Required on **every finding** and on **every collection object**. Flat — not n
 
 ```
 provenance = {
-  evidence_origin,                  // the AOSP channel id, e.g. "C1_anr_logcat"
+  evidence_origin,                  // the channel name this came from, e.g. "logcat_anr_tag"
   archive_path, section_title, section_ordinal,
   line_start, line_end,             // archive locator; line_start is the ordering key
   captured_at,                      // RFC 3339 + explicit offset, or null
@@ -475,7 +525,7 @@ provenance = {
 | `freshness_basis` | object | yes | `{ input, basis, threshold_seconds }`. All three required. |
 | `cross_boot_reference` | integer \| null | yes | Milliseconds of uptime on a **different boot epoch**. `null` otherwise. |
 | `collector_perturbed` | boolean \| null | yes | Did the collection plausibly change this number? |
-| `collector_perturbed_basis` | string \| null | yes | Why, naming the sections and durations. |
+| `collector_perturbed_basis` | enum \| null | yes | **Now a closed code, not a sentence.** `section_measured_before_dump`, `section_measured_during_dump`, `read_from_disk`, `live_log_capture`, `undated_source`. A tool picks the code by comparing the evidence's own clock against `capture.captured_at`; where that comparison is impossible because the evidence is undated, the value is `null` and an `evidence_gaps[]` entry records it. The prose form was unusable: it either restated what the code already said, or it asserted a mechanism ("the dumpstate pass did not generate these") that the archive cannot confirm. |
 
 #### `captured_at_time_base` — the 11-value enum
 
@@ -618,6 +668,22 @@ Two traps are encoded as rules:
 `severity` is always accompanied by the numeric measurement that justified it, in `metrics`.
 A severity with no measurement is a schema violation.
 
+**Each artifact must state its severity rule, and that rule is what the artifact implements.**
+The five definitions above are prose, not a mapping, and a prose definition is not
+machine-writable. §4.2–§4.7 therefore each carry an explicit `severity_rule` table: a closed
+set of machine-checkable conditions over the artifact's own fields, each naming the metrics
+that satisfy it. A finding's `severity` is the highest level whose rule fires. Two consequences
+follow, and both are deliberate:
+
+- A finding that matches **no** rule is a schema defect, not an `info`. It must be raised
+  against the rule table, not emitted with a default severity.
+- `info` is reachable **only** by a rule that states what fact about the archive or its
+  absence is being reported — never as a fallback.
+
+`severity` and `confidence` are the only two judgment fields any artifact carries. `title` is
+not one of them: it is narrative, it is generated in `README.md` §4.1, and no JSON artifact
+carries it.
+
 ### 2.7 Evidence
 
 Because the tool is read-only over a ZIP, evidence is a **locator** plus a bounded excerpt —
@@ -639,7 +705,7 @@ evidence = {
 | --- | --- | --- | --- |
 | `archive_path` | string | yes | ZIP entry path, exact. Use `<main_entry>` for the main `.txt`. |
 | `kind` | enum | yes | `line_range` (line-bounded in a text entry), `file_entry` (a whole archive entry), `section` (a whole `------ … ------` section), `property` (a value in `SYSTEM PROPERTIES`), `record` (a structured record in another artifact). |
-| `locator.line_start` / `line_end` | integer \| null | yes | 1-based inclusive. `null` unless `kind == "line_range"`. |
+| `locator.line_start` / `line_end` | integer \| null | yes | 1-based inclusive. Required for `kind == "line_range"` **and** `kind == "section"` — a `------ … ------` section has a definite span in the file. `null` for `file_entry`, `property`, and `record`, which are not line-bounded. |
 | `locator.byte_offset` | integer \| null | yes | Uncompressed byte offset of `line_start` within the entry, so a consumer can seek without re-scanning. |
 | `locator.byte_length` | integer \| null | yes | Uncompressed byte length of the located span. |
 | `excerpt` | string | yes | Verbatim text. Never re-wrapped, never reflowed, never ellipsised inside. |
@@ -729,14 +795,19 @@ Six rules, each of which exists because the archive forced it.
    such a field with a `sections[].status` of `skipped_user_build`.
 3. **Byte-preserving raw values.** Any locale- or build-dependent formatted string is stored
    as `*_raw` (string) plus a best-effort parsed sibling plus `parsed_confidence`.
-4. **Every derived number carries its derivation.** If a schema computes a value rather than
-   reading it, it emits a sibling `*_derivation` (or `*_derived: true`). The literal
-   `2,007,345` for total PSS **does not appear in the archive** — a reader must be able to see
-   it is `used_pss_kb + cached_pss` from two different `ActivityManagerService` lines rather
-   than trust it.
-5. **Zero counts carry an absence reason.** Any count of `0` explainable by dump ordering —
-   e.g. `am_meminfo_count: 0` because the event log was captured before the dump that writes
-   it — carries a `*_absence_reason`.
+4. **Every derived number carries its derivation — unless the formula is already in the
+   schema.** If a value is computed rather than read, the schema must state the formula, and
+   that statement *is* the derivation. A sibling `*_derivation` string is emitted only when the
+   formula **cannot** be re-derived from the field table alone (for example when it depends on
+   a value the artifact does not carry). Prose that restates a formula already written down is
+   noise, and prose that adds an interpretation beyond the formula is fabrication.
+5. **Zero counts carry a match block, never an excuse.** A count of `0` is published with its
+   `pattern`, `coverage`, and `regions[]` per [§2.3](#23-counts-are-match-blocks), and nothing
+   else. **No artifact carries an `*_absence_reason` key.** Explaining *why* a count is zero
+   requires a cause the archive does not record — whether the platform omitted it, a build
+   gate suppressed it, or the analyzer failed to look. Only the third of those is knowable, and
+   it belongs in the generator's own diagnostics, never in the artifact. A tool that has not
+   finished looking has not produced a finding.
 6. **Cross-artifact references are pointers, not copies.** `capture_ref: "system.json#/capture"`
    points at the canonical object. The same derived value must not appear twice with two
    slightly different answers.
@@ -1258,11 +1329,11 @@ The thirteen envelope keys, plus:
 | `kernel` | object | yes | Kernel identity and boot args. |
 | `users` | object | yes | Multi-user / profile inventory from `dumpsys user`. |
 | `displays` | array | no | Display outputs, from the SurfaceFlinger CRITICAL dump. |
-| `hal` | object | yes | HIDL HAL inventory, with `covers_aidl: false`. |
+| `hal` | object | yes | HIDL HAL inventory from the `lshal` rows. |
 | `storage` | object | yes | Mount topology and what was copied under `FS/`. |
 | `scope` | object | yes | Extended: carries the full `sections[]` index with a `status` per section. |
 | `archive_entries` | object | yes | Inventory of the side artifacts in the ZIP. |
-| `evidence_gaps` | array | yes | Facts that could not be read, each with a reason. |
+| `evidence_gaps` | array | yes | Facts that could not be read. **Required in every artifact**, and non-empty is not a defect: an artifact that read everything has nothing to declare. See the shape below. |
 
 #### Field tables
 
@@ -1271,7 +1342,7 @@ The thirteen envelope keys, plus:
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
 | `captured_at` | string \| null | yes | `== dumpstate:` banner, RFC 3339 with explicit offset. `null` if the banner is absent — legitimate, not an error. | `dumpstate.cpp:802-805` |
-| `captured_at_time_base` | enum | yes | `dumpstate_header` or `archive_filename`. | `dumpstate.cpp:802`; filename form `:2835` |
+| `captured_at_time_base` | enum \| null | yes | `dumpstate_header` or `archive_filename`. `null` when `captured_at` is `null`. | `dumpstate.cpp:802`; filename form `:2835` |
 | `uptime_at_capture_seconds` | integer \| null | yes | Uptime in seconds at capture. **Never inferred from logcat timestamps.** | `dumpstate.cpp:1687`, `:828-830` |
 | `uptime.derivation` | string | yes when `uptime_at_capture_seconds` is non-null | The formula and its anchor lines. Required because the value is computed. | — |
 | `log_window` | object | yes | See [§2.1.3](#213-capture). | `logprint.cpp:1552-1554` |
@@ -1287,8 +1358,8 @@ The thirteen envelope keys, plus:
 | `type` | enum \| null | yes | Parsed from `display_id` (`…-userdebug`). **Available on every build type**, unlike `ro.build.type` from `getprop`. | `dumpstate.cpp:808` |
 | `is_user_build` | boolean \| null | yes | `type == "user"`. **The single flag that gates everything in [§3.2](#32-gated-sections).** | `DumpstateUtil.cpp:212-217` |
 | `tags` | string \| null | yes | `dev-keys` / `release-keys`. | `display_id` tail |
-| `incremental` | string \| null | yes | `14784989`. | `display_id` |
-| `version.release` / `version.sdk` | string / integer | yes | `15`, `35`. | `dumpstate.cpp:797,818` |
+| `incremental` | string \| null | yes | The incremental field of `display_id`. | `display_id` |
+| `version.release` / `version.sdk` | string / integer | yes | The release name and API level. | `dumpstate.cpp:797,818` |
 | `sdk_extensions` | array of string | yes | From the `SDK extensions: […]` line, produced by `SDK_EXT_INFO --header` with a 1 s timeout — may be absent. | `dumpstate.cpp:819-821` |
 | `module_metadata_version` | integer \| null | yes | Only printed when non-zero. | `dumpstate.cpp:814-817` |
 | `security_patch` | string \| null | yes | **`getprop`-only** ⇒ `null` on a `user` build. | `getprop` section |
@@ -1303,24 +1374,38 @@ tri-state rule of [§2.9](#29-null-absent-and-raw) in its purest form.
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
-| `name` | string \| null | yes | `sdk_gcar_arm64`. | `getprop` |
-| `device` | string \| null | yes | `emulator_car64_arm64`. **Differs from `name`** — the `Build:` header carries one, the fingerprint the other. Store both, never one from the other. | `getprop`; `dumpstate.cpp:808,810` |
-| `brand` / `manufacturer` / `model` | string \| null | yes | `google` / `Google` / `Car on arm64 emulator`. | `getprop` |
-| `first_api_level` | integer \| null | yes | 35. | `getprop` |
-| `characteristics` | array of string | yes | `["automotive"]`. On this archive the only *in-band* statement that this is a car. | `getprop` |
-| `cpu_abi` / `cpu_abilist` | string \| null | yes | `arm64-v8a`. | `getprop` |
+| `name` | string \| null | yes | `ro.product.name`. | `getprop` |
+| `device` | string \| null | yes | `ro.product.device`. **Differs from `name`** — the `Build:` header carries one, the fingerprint the other. Store both, never one from the other. | `getprop`; `dumpstate.cpp:808,810` |
+| `brand` / `manufacturer` / `model` | string \| null | yes | `ro.product.*`. | `getprop` |
+| `first_api_level` | integer \| null | yes | `ro.product.first_api_level`. | `getprop` |
+| `characteristics` | array of string | yes | `ro.build.characteristics`. On the reference archive the only *in-band* statement that the device is automotive. | `getprop` |
+| `cpu_abi` / `cpu_abilist` | string \| null | yes | `ro.product.cpu.abi` / `.abilist`. | `getprop` |
 
 ##### `device`
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
-| `is_emulator` | boolean \| null | yes | `ro.hardware == "ranchu"` **or** `ro.kernel.qemu == 1`. Decisive for reading virtio / `kvm-arm.mode=protected` as expected rather than anomalous. **⇒ `null` on a `user` build, never `false`.** | `getprop` |
-| `is_emulator_basis` | array of string | yes | The properties that decided it. Empty when `null`. | `getprop` |
+| `is_emulator` | boolean \| null | yes | `true` when any `is_emulator_basis` entry matched a published rule; `false` when none matched and every basis property was readable. **⇒ `null` on a `user` build, never `false`** ([§2.9](#29-null-absent-and-raw) rule 2). Rules `R1`–`R3` below. | `getprop` |
+| `is_emulator_basis` | array of object | yes | One entry per property actually read: `{property, value, matched_rule}`. `matched_rule` is `R1`/`R2`/`R3` or `null`. Empty when `is_emulator` is `null`. | `getprop` |
 | `avd_name` | string \| null | yes | `ro.boot.qemu.avd_name`. | `getprop` |
 | `serial_no` | string \| null | yes | `ro.boot.serialno`. | `getprop` |
 | `boot_hardware` | string \| null | yes | `androidboot.hardware` from `/proc/bootconfig`. **Available on all builds.** | `dumpstate.cpp:826-827` |
 | `bootconfig_excerpt` | object | yes | The small set of keys that change device class: `boot_devices`, `hardware.vulkan`, `qemu`, `qemu.avd_name`, `qemu.skin`, `qemu.vsync`, `veritymode`, `vbmeta.digest`, `vbmeta.hash_alg`, `vbmeta.size`, `logcat`. | `dumpstate.cpp:826-827` |
 | `cmdline_has_kvm_arm_protected` | boolean \| null | yes | Derived from `/proc/cmdline`. | `dumpstate.cpp:825` |
+
+> **The `is_emulator` rule is fixed by this schema, not learned per archive.** A tool implements
+> the table below and nothing else; it does not decide "does this look like an emulator" per run.
+> The rule is small and published on purpose, because the alternative — an unstated heuristic —
+> is exactly the kind of judgment this schema exists to exclude.
+>
+> | Condition | Property | Value | Effect |
+> | --- | --- | --- | --- |
+> | `R1` | `ro.hardware` | `ranchu` | `is_emulator: true` |
+> | `R2` | `ro.kernel.qemu` | `1` | `is_emulator: true` |
+> | `R3` | `ro.boot.qemu` | `1` | `is_emulator: true` |
+>
+> `true` if any of `R1`–`R3` matched; `false` only if all three properties were readable and none
+> matched; `null` if `getprop` was gated. No other rule may set this field.
 
 ##### `kernel`
 
@@ -1340,39 +1425,38 @@ app-op monitor string at archive line 1957. The authoritative multi-user facts a
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
-| `current_user_id` | integer | yes | 10. | `UserManagerService.java:7311-7317` |
+| `current_user_id` | integer | yes | The `Current user: N` value. | `UserManagerService.java:7311-7317` |
 | `list[]` | array of object | yes | One per `UserInfo{…}` line. | `UserManagerService.java:7322-7331` |
-| `list[].id` | integer | yes | 0, 10. | `UserManagerService.java:7464` |
-| `list[].name` | string \| null | yes | `null` for user 0, `Driver` for user 10. | `UserInfo.java:528-533` |
+| `list[].id` | integer | yes | The user id. | `UserManagerService.java:7464` |
+| `list[].name` | string \| null | yes | The profile name, `null` where the `UserInfo` carries none. | `UserInfo.java:528-533` |
 | `list[].flags` | array of string | yes | Parsed from the symbol list, not the number. | `UserManagerService.java:7483-7485` |
-| `list[].flags_hex` | integer | yes | 813 (0x32b), 412 (0x19c). | `UserInfo.java:532` |
-| `list[].is_primary` | boolean | yes | `true` / `false`. | `UserManagerService.java:7466` |
-| `list[].parent_id` | integer \| null | yes | Printed only when it differs from `id`. **`null` for a full secondary user on this device** — the profile-of-0 relationship is *not printed*, so "which profile group does user 10 belong to" is **unanswerable from the archive**. | `UserManagerService.java:7467-7470` |
-| `list[].type` | string | yes | `android.os.usertype.system.HEADLESS`, `…full.SECONDARY`. | `UserManagerService.java:7482` |
-| `list[].state` | string | yes | `RUNNING_UNLOCKED`. | `UserManagerService.java:7486-7492` |
-| `list[].serial_no` | integer | yes | 0, 10. | `UserManagerService.java:7465` |
-| `list[].start_time_ago` | string | yes | `+49s735ms` — an **uptime-relative** "ago" string, not a wall clock. Same clock as `ProcessRecord.startUpTime`. | `UserManagerService.java:7495-7497` |
-| `list[].last_logged_in_ago` / `unlock_time_ago` / `last_entered_foreground_ago` | string | yes | Same encoding. | `UserManagerService.java:7499-7510` |
-| `list[].created_ago` | string \| null | yes | `+128d0h36m51s528ms` for user 10 vs `<unknown>` for user 0. `<unknown>` is a **literal in the archive**, normalised to `null` here. | `UserManagerService.java:7493-7494` |
-| `cross_check.package_dump_user_ids` | array of integer | yes | Users for which the package dump carries install state. | `Settings.java:5471` |
+| `list[].flags_hex` | integer | yes | The hexadecimal `UserInfo{…}` third field, parsed as hex. Store it verbatim alongside `flags`; never convert one into the other — the two use different conventions and conflating them produces two wrong numbers. | `UserInfo.java:532` |
+| `list[].is_primary` | boolean | yes | From the `PRIMARY` flag symbol. | `UserManagerService.java:7466` |
+| `list[].parent_id` | integer \| null | yes | `null` when no parent line is printed for this `UserInfo`. **No reason is published for the `null`** — whether the platform omits it for a full secondary user or for some other reason is AOSP behaviour the analyzer cannot confirm from the archive. Recorded in `evidence_gaps[]` as `UNVERIFIABLE`. | `UserManagerService.java:7467-7470` |
+| `list[].type` | string | yes | The printed `Type:` line verbatim. | `UserManagerService.java:7482` |
+| `list[].state` | string | yes | The printed `State:` line verbatim. | `UserManagerService.java:7486-7492` |
+| `list[].serial_no` | integer | yes | The serial number from the `UserInfo` header. | `UserManagerService.java:7465` |
+| `list[].start_time_ago` | string \| null | yes | The `+NmSmmm`-form "ago" string — an **uptime-relative** value, not a wall clock. Same clock as `ProcessRecord.startUpTime`. | `UserManagerService.java:7495-7497` |
+| `list[].last_logged_in_ago` / `unlock_time_ago` / `last_entered_foreground_ago` | string \| null | yes | Same encoding and same clock. | `UserManagerService.java:7499-7510` |
+| `list[].created_ago` | string \| null | yes | The creation "ago" string. `<unknown>` is a **literal in the archive**, normalised to `null` here per [§2.9](#29-null-absent-and-raw) rule 1. | `UserManagerService.java:7493-7494` |
+| `cross_check` | object | yes | **Reduced to raw counts only.** `package_dump_user_ids` (array of integer), `package_install_state_blocks`, `shared_user_blocks`, `shared_user_state_blocks`, `other_user_header_blocks`. All five are literal counts over the `DUMP OF SERVICE package:` section. **The `arithmetic` prose and the `agrees_with_dumpsys_user` verdict are removed** — a reconciliation sentence and a conclusion are judgment, and neither is needed for a consumer to see that the counts do or do not line up. |
+| `cross_check` gap | — | — | Where the five counts do not close, the shortfall is published as an `evidence_gaps[]` entry with `reason: AMBIGUOUS_SOURCE` naming which blocks were unclassified. The tool does not choose a story that makes them close. |
 
 ##### `displays[]`, `hal`, `storage`
 
 | Object | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `displays[]` | `display_id` | integer | yes | `4619827259835644672`. | SurfaceFlinger CRITICAL dump, `dumpstate.cpp:1382` |
-| | `hwc_display` / `port` | integer | yes | 0, 1. | same |
-| | `pnp_id` | string | yes | `GGL`. | same |
-| | `display_name` | string | yes | `EMU_display_0`, `EMU_display_1`. The only stable handles for the two outputs. | same |
+| `displays[]` | `display_id` | integer | yes | The SurfaceFlinger display handle. | SurfaceFlinger CRITICAL dump, `dumpstate.cpp:1382` |
+| | `hwc_display` / `port` | integer | yes | The HWC display index and the output port. | same |
+| | `pnp_id` | string | yes | The plug-and-play id, `GGL` on a SwiftShader/emulated target. | same |
+| | `display_name` | string | yes | The display name, `EMU_display_N` on an emulator. The only stable handle for an output. | same |
 | `hal` | `hidl_services[]` | array of object | yes | Rows of `lshal --all --types=all`: `interface::instance`, `transport`, `server_pid`, `arch`, `threads_used`/`total`, `registered`. | `dumpstate.cpp:1421-1423` |
 | | `hidl_debug_entries[]` | array of string | yes | ZIP entries under `lshal-debug/`, one per interface whose `lshal debug -E` produced non-empty output within 2 s. | `dumpstate.cpp:1434-1466` |
-| | `covers_aidl` | boolean | yes | **Always `false`.** `DumpHals()` enumerates the HIDL service manager only (`dumpstate.cpp:1426-1428`). A tiny `lshal-debug/` means "few HIDL HALs", **not** "few HALs". | `dumpstate.cpp:1422,1426-1428` |
-| | `lshal_debug_requires_root` | boolean | yes | `true`. `AsRootIfAvailable()` is downgraded to a no-op on `user` builds. | `dumpstate.cpp:1458`; `DumpstateUtil.cpp:299-302` |
 | `storage` | `mountinfo_pids` | array of integer | yes | PIDs whose `/proc/<pid>/mountinfo` was read. **A PID appearing here was alive at capture** — a cheap independent liveness signal. | `dumpstate.cpp:498-504` |
 | | `archived_trees` | array of string | yes | Directory prefixes copied under `FS/`. | `dumpstate.cpp:1950-1952,1983,948,1106` |
-| | `anr_files_archived` | array of object | yes | `path`, `mtime`, `bytes` per `FS/data/anr/anr_*`. **Freshness lives here** — all 65 dated 2026-05-20. `system.json` records them as *device state*; `anr.json` decides staleness. | `dumpstate.cpp:1931-1933` |
-| | `tombstone_count_archived` | integer \| null | yes | 50 text + 50 `.pb` = 100 ZIP entries. Recorded as a count plus date range; `crashes.json` owns the content. | `dumpstate.cpp:1931` |
-| | `dynamic_partition_info_present` | boolean | yes | `true` if `DumpDynamicPartitionInfo()` ran. | `dumpstate.cpp:1953` |
+| `storage` | `anr_files_archived` | array of object | yes | `path`, `mtime`, `bytes` per `FS/data/anr/anr_*`. **Freshness lives here.** `system.json` records the files as *device state*; `anr.json` decides staleness. | `dumpstate.cpp:1931-1933` |
+| | `tombstone_count_archived` | integer \| null | yes | Count of tombstone ZIP entries. `crashes.json` owns their content. | `dumpstate.cpp:1931` |
+| | `dynamic_partition_section_status` | enum | yes | The [§2.2](#22-section-status-enum) status of the `LPDUMP` section. **Not** a boolean: the section can be present *and* have failed (`*** command 'lpdump --all' failed`), and a boolean cannot express that. | `dumpstate.cpp:1953` |
 
 ##### `archive_entries`
 
@@ -1380,11 +1464,11 @@ app-op monitor string at archive line 1957. The authoritative multi-user facts a
 | --- | --- | --- | --- | --- |
 | `proto[]` | array of object | yes | `path`, `bytes`. **`bytes: 0` is normal, not corruption** — `RunDumpsysProto` adds an entry for every service claiming proto support even if the dump wrote nothing. | `dumpstate.cpp:1340-1380` |
 | `proto[].status` | enum | yes | `ok` or `declined`. `declined` ⇔ `bytes == 0`. | same |
-| `proto.suffix_meaning` | object | yes | `{ "_CRITICAL": CRITICAL, "_HIGH": HIGH, "": NORMAL }`. | `dumpstate.cpp:1354-1359` |
+| `proto.suffix_meaning` | object | yes | **Removed.** The `_CRITICAL` / `_HIGH` / `""` suffix scheme is a property of dumpstate's priority selection, not of any archive. A tool that needs it reads it from here, in prose; it never emits it as data. |
 | `fs_paths` | array of string | yes | Every `FS/**` entry. | `dumpstate.cpp:375` |
-| `fs_user_build_gated` | array of string | yes | Paths present **only** on non-`user` builds: `FS/data/misc/profiles/…`, the dexopt use-list, and the inline Dropbox entries. Listed so their absence is interpretable. | `dumpstate.cpp:1943-1946,1956-1960` |
+| `fs_user_build_gated` | array of string | yes | **Removed.** The gated-path *list* is AOSP control flow. Presence or absence of a given path on a given archive is already visible in `fs_paths`; the enumeration of which paths *could* be gated is not a per-run observation. |
 | `lshal_debug` | array of string | yes | ZIP entry names. | `dumpstate.cpp:1464` |
-| `visible_windows` | object | yes | `present`, `entries[] = {id, title, bytes, mtime}`, `command`, `timeout_seconds`, `producer`. | `dumpstate.cpp:1111-1129` |
+| `visible_windows` | object | yes | `present`, `entries[] = {id, title, bytes, mtime}`. **No `command`, `timeout_seconds`, or `producer`** — no archive prints which command produced it or how long it was given, so those three were unverifiable constants. `present: false` says all that is knowable. | `dumpstate.cpp:1111-1129` |
 | `dumpstate_board` | object | yes | `present`, `bytes`, `has_board_binary`. Content is device-defined and unparseable in general. | `dumpstate.cpp:379-383` |
 
 ##### `scope.sections[]`
@@ -1395,11 +1479,11 @@ One entry per recognised section banner.
 | --- | --- | --- | --- | --- |
 | `title` | string | yes | Text between `------ ` and ` (`. | `DumpstateUtil.cpp:306` |
 | `ordinal` | integer | yes | 0-based index among sections sharing the title. | — |
-| `command` | string | yes | The literal argv dumpstate ran, e.g. `/system/xbin/su root lshal --all --types=all`. **Keeping the `su root` prefix is what lets a build-type consumer work.** | `DumpstateUtil.cpp:290-297,306` |
+| `command` | string \| null | yes | The literal argv dumpstate ran, e.g. `/system/xbin/su root lshal --all --types=all`. `null` when the banner carries no command. **Keeping the `su root` prefix is what lets a build-type consumer work.** | `DumpstateUtil.cpp:290-297,306` |
 | `status` | enum | yes | See [§2.2](#22-section-status-enum). | — |
 | `start_line` / `end_line` | integer | yes | Line span in the main entry. Enables re-reading without rescanning. | — |
 | `duration_seconds` | number \| null | yes | From the paired duration trailer. A long duration with no content means a timeout. | `dumpstate.cpp:3831-3835` |
-| `note` | string \| null | yes | Why the status is what it is. Required when `status` is not `ok`. | — |
+| `note` | string \| null | yes | **Removed.** A free-text "why the status is what it is" is prose about a collector the analyzer cannot inspect. The `status` enum from [§2.2](#22-section-status-enum) already carries the machine-readable reason; where that is not enough, the fact belongs in `evidence_gaps[]`. |
 
 #### Provenance and freshness
 
@@ -1421,7 +1505,11 @@ ANR files at 2026-05-20 vs capture 2026-09-24 → **126 days**. That number, onc
 
 #### Worked example
 
-Abbreviated from the reference archive; every value was measured.
+Abbreviated from the reference archive. **Values are placeholders.** The reference archive is a
+worked fixture, not the specification: a concrete fingerprint, serial, package name, or timestamp
+would date this document and mislead anyone reading it as a schema. What is preserved is the
+*shape* — field names, types, nesting, enum membership, and the parts that carry a rule
+(the closed-set membership, the `[<lower>, <upper>]` bound form, the `"…"` elision).
 
 ```jsonc
 {
@@ -1436,127 +1524,109 @@ Abbreviated from the reference archive; every value was measured.
     "main_entry": "bugreport-sdk_gcar_arm64-AAG6.260127.001-2026-09-24-00-27-17.txt",
     "main_entry_size_bytes": 64645191,
     "main_entry_line_count": 682951,
-    "zip_entry_count": null,          // not measured; walk the central directory to fill
+    "zip_entry_count": 398,            // read from the ZIP central directory
     "device": {
-      "product_name": "sdk_gcar_arm64",
-      "build_id": "AAG6.260127.001",
-      "build_display_id": "sdk_gcar_arm64-userdebug 15 AAG6.260127.001 14784989 dev-keys",
-      "build_fingerprint": "google/sdk_gcar_arm64/emulator_car64_arm64:15/AAG6.260127.001/14784989:userdebug/dev-keys",
+      "product_name": "<product_name>",
+      "build_id": "<build_id>",
+      "build_display_id": "<product>-<type> <release> <build_id> <incremental> <tags>",
+      "build_fingerprint": "google/<product>/<device>:<release>/<build_id>/<incremental>:<type>/<tags>",
       "android_sdk_version": 35,
-      "build_type": "userdebug",
-      "device": "emulator_car64_arm64",
-      "hardware": "ranchu",
-      "bootloader": "unknown",        // AOSP prints "unknown" literally for ro.bootloader
-      "radio": null                   // AOSP prints "(unknown)" — normalised to null per §2.9
+      "build_type": "<type>",
+      "device": "<device>",
+      "hardware": "<hardware>",
+      "bootloader": null,             // header prints "(unknown)" — normalised to null per §2.9
+      "radio": null                   // header prints "(unknown)" — normalised to null per §2.9
     }
   },
 
   "capture": {
-    "captured_at": "2026-09-24T00:27:17+07:00",
+    "captured_at": "<captured_at>",
     "captured_at_time_base": "dumpstate_header",
-    "uptime_at_capture_seconds": 30,
+    "uptime_at_capture_seconds": <uptime_seconds>,
     "uptime": {
-      "header_raw": "up 0 weeks, 0 days, 0 hours, 0 minutes,  load average: 10.42, 2.38, 0.78",
-      "section_raw": "00:27:25 up 0 min,  0 users,  load average: 9.66, 2.36, 0.79",
+      "header_raw": "up 0 weeks, 0 days, 0 hours, 0 minutes,  load average: <load_1m>, <load_5m>, <load_15m>",
+      "section_raw": "HH:MM:SS up 0 min,  <users> users,  load average: <load_1m>, <load_5m>, <load_15m>",
       "raw_precision": "minutes",
-      "precision": "seconds",
-      "precision_note": "header_raw and section_raw are minute-granular wall clock samples and are retained verbatim as evidence only; they cannot corroborate a seconds-level figure. The published value is derived, at +/- 0.6 s.",
-      "seconds_at_start": 30.2,
-      "uncertainty_seconds": 0.6,
-      "derivation": "Boot instant B solved from three independent (wall clock, uptime) pairs, each printed inside a section that also records its own end time. For each pair B = footer_end_wall - section_duration - uptime_ms/1000. (1) line 319851 'Uptime: 45590 Realtime: 45590' in DUMPSYS HIGH meminfo, footer line 326111 '3.525s ... ending at: 2026-09-24 00:27:36' -> B = 00:26:46.885. (2) lines 488275-488276 'Now: 57365 (2026-09-24 00:27:44)' / 'Uptime: 57s' in dumpsys content, footer line 489329 '0.025s ... ending at: 00:27:44' -> B = 00:26:46.610. (3) line 499493 'Uptime: 57918 Realtime: 57918' in DUMPSYS gfxinfo, footer line 501966 '0.849s ... ending at: 00:27:46' -> B = 00:26:47.233. Uptime == Realtime in all three, so there was zero suspend time and uptime is identically elapsedRealtime. The three bracket B to [00:26:46.610, 00:26:47.233]. The kernel message at line 9126 '09-24 00:26:47.418 ... Booting Linux on physical CPU 0x0000000000' fixes the upper bound at 00:26:47.418, giving B ~= 00:26:47.33 +/- 0.10 s. Uptime at capture = banner (line 2, '== dumpstate: 2026-09-24 00:27:17') minus B = 00:27:17.000 - 00:26:47.33 ~= 29.67 s; allowing for the banner's 1-second truncation and the B bracket gives [29.58, 30.77) s, published as 30 s +/- 0.6 s.",
-      "superseded_readings": {
-        "27_s": "misread the wall clock '00:27:25' on the UPTIME section line (archive lines 57012-57014) as an elapsed time. That clock is when the 'uptime' command was sampled; the elapsed field on the same line is only 'up 0 min'. The true elapsed value at that line is 00:27:25 - B ~= 38 s, which is still consistent with 'up 0 min'.",
-        "17_118_s": "decomposes exactly as 00:27:17.001 - 00:26:59.883, where 00:26:59.883 is the logcat timestamp of 'Start proc 944:com.android.car/1000' (line 21915). It is the AGE OF THAT PROCESS at the banner instant - a real and useful quantity, but not device uptime."
-      },
-      "process_age_cross_check": {
-        "note": "The AMS anchor validates as a process-age cross-check. ProcessRecord at lines 390276-390289 gives startUpTime=-42s16ms for pid 944; its footer (line 395693) reads '0.218s ... dumpsys activity, ending at: 00:27:42'. So the AMS snapshot instant = 00:26:59.883 + 42.016 = 00:27:41.899, which is 0.101 s before the recorded end - internally exact. Do NOT read '-42s16ms' as an absolute uptime; that would imply 00:27:29.34, 12.7 s off.",
-        "derived_snapshot_instant": "2026-09-24T00:27:41.899+07:00",
-        "gap_to_footer_seconds": 0.101
-      },
-      "evidence": {
-        "banner": "line 2",
-        "kernel_boot": "line 9126",
-        "meminfo_uptime": "line 319851",
-        "meminfo_footer": "line 326111",
-        "content_uptime": "lines 488275-488276",
-        "content_footer": "line 489329",
-        "gfxinfo_uptime": "line 499493",
-        "gfxinfo_footer": "line 501966",
-        "start_proc": "line 21915",
-        "ams_start_uptime": "lines 390276-390289",
-        "ams_footer": "line 395693",
-        "header_raw": "line 43",
-        "section_raw": "line 57013"
-      }
+      "seconds_at_start": <uptime_seconds_exact>,
+      "bounds_seconds": [<uptime_lower_bound_seconds>, <uptime_upper_bound_seconds>],
+      "derivation": "Boot instant B solved from independent (wall clock, uptime) pairs, each printed inside a section that records its own end time and duration. For each pair B = footer_end_wall − section_duration − uptime_ms/1000. The pairs bracket B to [<B_lower>, <B_upper>]; a kernel 'Booting Linux' message fixes the upper bound. Uptime at capture = banner_wall − B, giving the published bounds.",
+      "derivation_inputs": [
+        { "line": <line>, "kind": "meminfo_uptime", "wall": "<wall_clock>", "uptime_ms": <ms> },
+        { "line": <line>, "kind": "content_uptime", "wall": "<wall_clock>", "uptime_ms": <ms> },
+        { "line": <line>, "kind": "gfxinfo_uptime",  "wall": "<wall_clock>", "uptime_ms": <ms> },
+        { "line": <line>, "kind": "kernel_boot",     "wall": "<wall_clock>", "uptime_ms": null },
+        { "line": <line>, "kind": "banner",          "wall": "<wall_clock>", "uptime_ms": null }
+      ]
     },
     "log_window": {
       "sections": ["SYSTEM LOG", "EVENT LOG", "STATS LOG", "RADIO LOG", "LAST LOGCAT", "SYSTEM LOG"],
-      "first_line_at": "09-24 00:26:47.418",
-      "last_line_at": "09-24 00:27:52.080",
-      "duration_seconds": 64.662,
+      "first_line_at": "MM-DD HH:MM:SS.mmm",
+      "last_line_at": "MM-DD HH:MM:SS.mmm",
+      "duration_seconds": <log_window_seconds>,
       "is_contiguous": false,
-      "overlaps_boot_instant": false,
-      "overlap_seconds": null,
-      "overlap_note": "The first parseable logcat line is 00:26:47.418, which falls INSIDE the boot bracket [00:26:46.61, 00:26:47.42] rather than before it - it is the kernel's own 'Booting Linux on physical CPU 0' line (archive line 9126). The log window therefore begins essentially at boot.",
+      "first_line_minus_boot_seconds": <delta_seconds>,
       "truncated": null
     },
     "boot": {
-      "at": "2026-09-24T00:26:47.33+07:00",
-      "uncertainty_seconds": 0.10,
+      "at": "<boot_epoch>",
+      "bounds_seconds": [<B_lower>, <B_upper>],
       "derivation": "see capture.uptime.derivation",
       "epoch_corroboration": {
-        "ro_runtime_firstboot": 1790184426434,
-        "implied_at_local": "2026-09-24T00:27:06.434+07:00",
+        "ro_runtime_firstboot": <epoch_ms>,
+        "implied_at_local": "<captured_at>",
         "agrees_with_derived": false,
-        "delta_seconds": 19.104,
-        "note": "ro.runtime.firstboot is RTC-derived and on this emulator it matches the APK-install stamp of com.example.cargearviewer (line 547084 'timeStamp=2026-09-24 00:27:06'). It sits ~19.1 s AFTER the solved boot instant, so the wall clock only became trustworthy well after uptime 0. Do not prefer it."
+        "delta_seconds": <delta_seconds>
       }
     },
     "is_cold_boot": true
   },
 
   "build": {
-    "display_id": "sdk_gcar_arm64-userdebug 15 AAG6.260127.001 14784989 dev-keys",
-    "fingerprint": "google/sdk_gcar_arm64/emulator_car64_arm64:15/AAG6.260127.001/14784989:userdebug/dev-keys",
-    "type": "userdebug",
+    "display_id": "<product>-<type> <release> <build_id> <incremental> <tags>",
+    "fingerprint": "google/<product>/<device>:<release>/<build_id>/<incremental>:<type>/<tags>",
+    "type": "<type>",
     "is_user_build": false,
-    "tags": "dev-keys",
-    "incremental": "14784989",
-    "version": { "release": "15", "sdk": 35 },
-    "sdk_extensions": ["ad_services=15", "r=15", "s=15", "t=15", "u=15", "v=15"],
+    "tags": "<tags>",
+    "incremental": "<incremental>",
+    "version": { "release": "<release>", "sdk": 35 },
+    "sdk_extensions": ["<ext>=<n>", "…"],
     "module_metadata_version": 35,
-    "security_patch": "2025-09-05",
-    "build_date_utc": "Tue Jan 27 13:18:08 UTC 2026",
-    "bootloader": "unknown",
+    "security_patch": "<YYYY-MM-DD>",
+    "build_date_utc": "<build_date>",
+    "bootloader": null,
     "radio": null,
     "network": null
   },
 
   "product": {
-    "name": "sdk_gcar_arm64", "device": "emulator_car64_arm64",
-    "brand": "google", "manufacturer": "Google", "model": "Car on arm64 emulator",
+    "name": "<product_name>", "device": "<device_name>",
+    "brand": "<brand>", "manufacturer": "<manufacturer>", "model": "<model>",
     "first_api_level": 35,
     "characteristics": ["automotive"],
-    "cpu_abi": "arm64-v8a", "cpu_abilist": "arm64-v8a"
+    "cpu_abi": "<abi>", "cpu_abilist": "<abilist>"
   },
 
   "device": {
     "is_emulator": true,
-    "is_emulator_basis": ["ro.hardware=ranchu", "ro.kernel.qemu=1"],
-    "avd_name": "Automotive_Ultrawide",
-    "serial_no": "EMULATOR36X5X11X0",
-    "boot_hardware": "ranchu",
+    "is_emulator_basis": [
+      { "property": "ro.hardware",   "value": "ranchu", "matched_rule": "R1" },
+      { "property": "ro.kernel.qemu", "value": "1",     "matched_rule": "R2" },
+      { "property": "ro.boot.qemu",   "value": null,   "matched_rule": null }
+    ],
+    "avd_name": "<avd_name>",
+    "serial_no": "<serial>",
+    "boot_hardware": "<hardware>",
     "bootconfig_excerpt": {
-      "boot_devices": "a003600.virtio_mmio", "hardware.vulkan": "ranchu",
-      "qemu": "1", "qemu.skin": "automotive_ultrawide_cutout", "qemu.vsync": "60",
-      "veritymode": "enforcing", "vbmeta.hash_alg": "sha256", "logcat": "*:V"
+      "boot_devices": "<block_device>", "hardware.vulkan": "<hardware>",
+      "qemu": "1", "qemu.skin": "<skin>", "qemu.vsync": "<hz>",
+      "veritymode": "<mode>", "vbmeta.hash_alg": "<alg>", "logcat": "<logcat_level>"
     },
     "cmdline_has_kvm_arm_protected": true
   },
 
   "kernel": {
-    "version_release": "6.6.30-android15-8-g02f25b80c91c-ab12341571-4k",
-    "cmdline": "console=ttynull stack_depot_disable=on cgroup_disable=pressure kasan.stacktrace=off kvm-arm.mode=protected bootconfig ioremap_guard …",
+    "version_release": "<kernel_release>",
+    "cmdline": "console=ttynull … kvm-arm.mode=protected bootconfig …",
     "config_archived": true
   },
 
@@ -1578,101 +1648,110 @@ Abbreviated from the reference archive; every value was measured.
     ],
     "cross_check": {
       "package_dump_users": [0, 10],
-      "package_dump_user_blocks": 594,
+      "package_install_state_blocks": 564,
       "shared_user_blocks": 14,
-      "arithmetic": "282 packages x 2 users = 564, + 14 SharedUser x 2 = 28 => 592; the measured section contains 594 'User N:' blocks, so two blocks are attributable to neither set — see open questions",
-      "agrees_with_dumpsys_user": true
+      "shared_user_state_blocks": 28,
+      "other_user_header_blocks": 2
     }
   },
 
   "hal": {
-    "hidl_binderized_count": 55,
-    "hidl_passthrough_count": 10,
-    "hidl_debug_entries": [
-      "android.hardware.audio.effect@6.0__IEffectsFactory_default.txt",
-      "android.hardware.media.c2@1.0__IComponentStore_default.txt",
-      "android.hardware.media.c2@1.2__IComponentStore_software.txt"
+    "hidl_services": [
+      { "interface_instance": "<vendor.hardware.<name>@<ver>/<name>::default",
+        "transport": "binder", "server_pid": <pid>, "arch": "<arch>",
+        "threads_used": <n>, "threads_total": <n>, "registered": true },
+      "…"
     ],
-    "covers_aidl": false,
-    "lshal_debug_requires_root": true
+    "hidl_debug_entries": [
+      "<vendor.hardware.<name>@<ver>__<Iface>_default.txt",
+      "…"
+    ]
   },
 
   "storage": {
-    "mountinfo_pids_count": 88,
+    "mountinfo_pids_count": <count>,
     "archived_trees": ["data/", "linkerconfig/", "proc/", "product/", "system/", "system_ext/", "vendor/"],
-    "anr_files_archived_count": 65,
-    "anr_files_date_range": ["2026-05-20 00:54:11", "2026-05-20 05:13:42"],
-    "anr_files_staleness_days_vs_capture": 126,
-    "tombstone_count_archived": 50,
-    "tombstone_zip_entries": 100,      // 50 text + 50 .pb
-    "dynamic_partition_info_present": true
+    "anr_files_archived_count": <count>,
+    "anr_files_date_range": ["<YYYY-MM-DD>THH:MM:SS", "<YYYY-MM-DD>THH:MM:SS"],
+    "anr_files_staleness_seconds": <seconds>,
+    "tombstone_count_archived": <count>,
+    "tombstone_zip_entries": <count>,
+    "dynamic_partition_section_status": "failed"
   },
 
   "archive_entries": {
-    "proto_declined_count": 3,
-    "fs_user_build_gated": ["FS/data/misc/profiles/**", "<PACKAGE_DEX_USE_LIST>", "<DROPBOX_DIR> entries (wtf/strictmode filtered)"],
+    "proto_declined_count": <count>,
     "visible_windows": {
       "present": true,
-      "command": "cmd window dump-visible-window-views",
-      "timeout_seconds": 10,
       "entries": [
-        { "id": "4422b2b", "title": "com.example.cargearviewer/com.example.cargearviewer.MainActivity", "bytes": 12777, "mtime": "2026-09-24 00:27" },
-        { "id": "42b3c53", "title": "TopCarSystemBar", "bytes": 51634 }
-      ],
-      "triage_value": "The foreground app at capture is com.example.cargearviewer, 28.5 s after the osdouble crash loop began — the loop was running behind an unrelated app."
+        { "id": "<hash>", "title": "<package>/<activity>", "bytes": <n>, "mtime": "<YYYY-MM-DD>THH:MM" },
+        { "id": "<hash>", "title": "<SystemUi window title>", "bytes": <n>, "mtime": "<YYYY-MM-DD>THH:MM" }
+      ]
     },
-    "dumpstate_board": { "present": true, "bytes": 153, "has_board_binary": false,
-      "content_unparsed": "vendor stub: 'verbose logging: disabled' / '[default] Hello, world!'" }
+    "dumpstate_board": { "present": true, "bytes": <n>, "has_board_binary": false,
+      "content_excerpt": "<verbatim first N bytes>" }
   },
 
   "scope": {
-    "sections_scanned": 1100,
-    "sections_matched": 1100,
+    "sections_scanned": <count>,
+    "sections_matched": <count>,
     "sections_listed": ["UPTIME", "DUMPSYS CRITICAL", "…", "SYSTEM LOG", "…", "SYSTEM LOG"],
     "sections_skipped": [],
     "sections_not_found": [],
-    "max_lines_read": 682951,
+    "max_lines_read": <line_count>,
     "truncated": false,
     "sections": [
-      { "title": "UPTIME", "ordinal": 0, "command": "uptime", "start_line": 57012, "end_line": 57014,
-        "duration_seconds": 0.006, "status": "ok" },
+      { "title": "UPTIME", "ordinal": 0, "command": "uptime", "start_line": <line>, "end_line": <line>,
+        "duration_seconds": <s>, "status": "ok" },
       { "title": "HARDWARE HALS", "ordinal": 0, "command": "/system/xbin/su root lshal --all --types=all",
-        "status": "ok", "note": "the 'su root' prefix is retained so a build-type consumer can tell this section was root-gated" },
-      { "title": "SYSTEM PROPERTIES", "ordinal": 0, "command": "getprop", "status": "ok",
-        "user_build_gate": "not_applicable" },
-      { "title": "ANR FILES", "ordinal": 0, "command": "ls -lt /data/anr/", "start_line": 318023,
-        "end_line": 318090, "duration_seconds": 0.006, "status": "ok" },
+        "start_line": <line>, "end_line": <line>, "duration_seconds": <s>, "status": "ok" },
+      { "title": "SYSTEM PROPERTIES", "ordinal": 0, "command": "getprop",
+        "start_line": <line>, "end_line": <line>, "duration_seconds": <s>, "status": "ok" },
+      { "title": "ANR FILES", "ordinal": 0, "command": "ls -lt /data/anr/", "start_line": <line>,
+        "end_line": <line>, "duration_seconds": <s>, "status": "ok" },
       { "title": "VM TRACES AT LAST ANR", "ordinal": 0,
-        "command": "/data/anr/anr_2026-05-20-05-13-42-314", "start_line": 309986, "end_line": 318022,
-        "status": "ok", "note": "header carries mtime 2026-05-20 05:13:43; freshness is stale and is decided in anr.json" }
+        "command": "/data/anr/anr_<YYYY-MM-DD-HH-mm-ss-SSS>", "start_line": <line>, "end_line": <line>,
+        "duration_seconds": <s>, "status": "ok" }
     ]
   },
 
   "evidence_gaps": [
-    { "field": "capture.uptime_at_capture_seconds", "reason": "derived, not read: 30 s +/- 0.6 s from the solved boot instant B ~= 00:26:47.33 +/- 0.10 s (three (wall clock, uptime) pairs bracketed by the kernel 'Booting Linux' line at archive line 9126). See uptime.derivation. The residual limitation is that the +/- 0.6 s is dominated by the 1-second truncation of the banner and 'uptime' wall clocks, and that header_raw and section_raw are themselves minute-granular, so they cannot independently corroborate a seconds-level figure." },
-    { "field": "capture.log_window.truncated", "reason": "dumpstate records no logcat truncation flag" },
-    { "field": "users.list[].parent_id", "reason": "UserManagerService.java:7467-7470 prints parentId only when it differs from id" },
-    { "field": "hal.aidl_services", "reason": "dumpstate.cpp:1426-1428 enumerates the HIDL hwservicemanager only" },
-    { "field": "source.zip_entry_count", "reason": "not measured on the host during this pass; must be read from the central directory per REQ-GEN-01" },
-    { "field": "users.cross_check.package_dump_user_blocks", "reason": "measured 594, but 282*2 + 14*2 = 592; two blocks are unaccounted for" }
+    { "field": "capture.uptime_at_capture_seconds", "reason": "PARSE_INDETERMINATE",
+      "detail": "derived, not read. No archive-internal source states seconds-level uptime directly; the published value rests on a solved boot bracket whose bounds are dominated by the 1-second truncation of the dumpstate banner clock. header_raw and section_raw are minute-granular and cannot corroborate a seconds-level figure. See uptime.derivation and uptime.bounds_seconds." },
+    { "field": "capture.log_window.truncated", "reason": "NOT_PRINNED",
+      "detail": "dumpstate records no logcat truncation flag." },
+    { "field": "users.list[].parent_id", "reason": "UNVERIFIABLE",
+      "detail": "no parent line is printed for these users. Whether the platform omits it for a full secondary user or for another reason is AOSP behaviour this archive cannot confirm." },
+    { "field": "hal.aidl_services", "reason": "UNVERIFIABLE",
+      "detail": "the lshal rows enumerate the HIDL hwservicemanager only, so AIDL services are outside this section entirely. Absence here says nothing about AIDL." },
+    { "field": "storage.dynamic_partition_section_status", "reason": "SECTION_FAILED",
+      "detail": "the LPDUMP section is present but its command exited non-zero, so no partition metadata was captured." },
+    { "field": "users.cross_check.other_user_header_blocks", "reason": "AMBIGUOUS_SOURCE",
+      "detail": "these User N: blocks are not attributable to either the install-state or SharedUser sets by any archive-visible rule. The tool publishes the residual count rather than assigning the blocks to a category." }
+  ],
+
+  "findings": [],
+
+  "notes": [
+    "EMPTY_FINDINGS_BY_DESIGN: system.json is the fact sheet. It publishes what was captured, when, and on what, and carries no findings of its own; every finding in the output set belongs to one of the five signal artifacts. This array is empty rather than absent so the key count matches the shared envelope, and this note exists because §2.1 requires an empty findings array to say why.",
+    "GAPS_ARE_DECLARED_NOT_HIDDEN: the evidence_gaps above are the limit of what this archive determines. An empty gaps array would assert that every published field was derivable from these bytes, which is almost never true."
   ]
 }
 ```
 
 #### Open questions
 
-- **Uptime at capture — resolved, with a residual error bar.** The published figure is
-  **30 s ± 0.6 s**, derived from the boot instant `B ≈ 00:26:47.33` ± 0.10 s. The two earlier
-  figures were both wrong: **27 s** misread the wall clock `00:27:25` on the `UPTIME` section
-  line as an elapsed time, and **17.118 s** is the age of the `com.android.car` process
-  (`Start proc 944`, line 21915) rather than device uptime. The derivation is in the worked
-  example above.
-  **What remains genuinely open:** no archive-internal source states seconds-level uptime
-  *directly* — the published figure rests entirely on the derived boot bracket, and its ± 0.6 s
-  uncertainty is dominated by the 1-second truncation of the `== dumpstate:` banner clock and of
-  the `uptime` wall clocks in `header_raw` / `section_raw`. A future run that can read
-  `/proc/uptime` or an equivalent seconds-precision source should replace the derivation with a
-  direct read.
+- **Uptime at capture — resolved, by derivation rather than by reading.** No archive-internal
+  source states seconds-level uptime directly, so the published value rests on a solved boot
+  bracket: several `(wall clock, uptime)` pairs are read from inside sections that also print
+  their own end time and duration, and the kernel `Booting Linux` message fixes an upper bound.
+  The artifact publishes `uptime.bounds_seconds` as an interval rather than a point estimate
+  with an error bar, and records the limit as an `evidence_gaps[]` entry with
+  `reason: PARSE_INDETERMINATE`.
+  **What remains genuinely open:** the bounds are dominated by the 1-second truncation of the
+  `== dumpstate:` banner clock and of the `uptime` wall clocks in `header_raw` / `section_raw`.
+  A future run that can read `/proc/uptime` or an equivalent seconds-precision source should
+  replace the derivation with a direct read and drop the gap.
 - **Timezone.** The `== dumpstate:` header carries no offset and no epoch
   (`dumpstate.cpp:804`). Every absolute time is therefore "device-local, offset unknown".
   Recoverable only if some section prints both an absolute time and an uptime delta.
@@ -1750,55 +1829,59 @@ log window cannot bound anything over the full window.
 | `duration_seconds` | number \| null | yes | Window length. |
 | `covers_log_window` | boolean \| null | yes | Whether the channel spans the whole `capture.log_window`. `null` for snapshots. |
 | `coverage_ratio` | number \| null | yes | **Required** when `covers_log_window` is false. See invariant 2 of [§2.3](#23-counts-are-match-blocks). |
-| `incomplete_reason` | string \| null | yes | `event_log_buffer_retention`, `gated_by_user_build`, `permission_dump_and_usage_stats`, `declined_by_service`, `not_emitted_by_platform`. |
+| `incomplete_reason` | enum \| null | yes | Why the channel cannot cover the log window. Closed set: `event_log_buffer_retention`, `gated_by_user_build`, `permission_denied`, `declined_by_service`. **`not_emitted_by_platform` is removed** — "the platform never produced this" is a claim about dumpstate's emission contract, not an archive observation. A channel that is `present: false` and has no window simply has `coverage_ratio: null`; where a consumer needs to know the section was *expected*, that is `scope.sections_not_found` in `system.json`. |
 | `snapshot_at` | string \| null | yes | For point-in-time channels, when the dump ran. |
 | `blocks[]` | array of object | no | For channels split across duplicate sections: `{ index, command, line_start, line_end }`. `index` disambiguates the two `SYSTEM LOG` blocks. |
-| `carries` | array of string | yes | What the channel contains, with counts. |
+| `carries` | array of string | yes | What the channel contains. Where a count appears it is the **channel-wide** count, never a filtered subset; a filtered subset belongs in `inventory`, where the filter is visible. |
+| `present` when false | — | — | A channel with `present: false` carries no window and no `coverage_ratio`. Every key is still present, `null` per [§2.9](#29-null-absent-and-raw) rule 1, and the gap is recorded in `evidence_gaps[]` with `reason: SECTION_ABSENT`. |
 
 ##### `inventory.counts`
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
-| `packages` | integer | yes | 282 `Package [` blocks. | `Settings.java:5118` |
-| `processes` | integer | yes | 83 = 74 `*APP*` + 9 `*PERS*`. | `ProcessList.java:4454-4477,4469` |
-| `processes_persistent` / `processes_app` | integer | yes | 9 / 74. | `ProcessList.java:4469` |
-| `distinct_process_names` | integer | yes | 58. | derived |
-| `packages_with_live_process` | integer | yes | 58. The coverage ratio is `58/282`. | derived |
-| `users` | integer | yes | 2. | `UserManagerService.java:7311-7331` |
-| `shared_uids` | integer | yes | 14 `SharedUser [` blocks. | `Settings.java` shared-user dump |
-| `package_user_state_blocks` | integer | yes | 594, with the arithmetic stored next to it. | `Settings.java:5471-5510` |
-| `lru` | object | yes | `{ total: 83, non_activity: 4, non_service: 4 }`, straight from the header. | `ProcessList.java:4323-4331` |
-| `car_service_process_names` | integer | yes | **13 — the count of `com.android.car.*` *processes*.** Explicitly not packages. | `ProcessRecord.java:1396` |
-| `car_service_packages` | integer | yes | **100+ — the count of `com.android.car.*` *packages*.** Storing both is the point. | `Settings.java:5118` |
-| `lifecycle_counts` | object | yes | `{ am_proc_start: 121, am_proc_bound: 121, am_proc_died: 40, am_kill: 0, am_process_crashed_too_much: 38 }`. | `EventLogTags.logtags:20,22,25,34,45` |
+| `packages` | integer | yes | `Package [` block count. | `Settings.java:5118` |
+| `processes` | integer | yes | `*APP*` + `*PERS*` record count. | `ProcessList.java:4454-4477,4469` |
+| `processes_persistent` / `processes_app` | integer | yes | The two record kinds, summing to `processes`. | `ProcessList.java:4469` |
+| `distinct_process_names` | integer | yes | Distinct `process_name` values across `processes[]`. | derived |
+| `installed_packages_with_live_process` | integer | yes | Distinct package names appearing in `inventory.index.process_name_to_packages` ∩ installed packages. **Renamed from `packages_with_live_process`**: it is a *package* count, and the previous name invited exactly the confusion with `distinct_process_names` that this artifact exists to prevent. A consumer can compute the coverage ratio as this ÷ `packages`. | derived |
+| `users` | integer | yes | `UserInfo` count. | `UserManagerService.java:7311-7331` |
+| `shared_uids` | integer | yes | `SharedUser [` block count. | `Settings.java` shared-user dump |
+| `package_user_state_blocks` | integer | yes | `User N:` block count inside the package section. | `Settings.java:5471-5510` |
+| `lru` | object | yes | `{ total, non_activity, non_service }`, read verbatim off the LRU header. | `ProcessList.java:4323-4331` |
+| `car_service_process_names` | integer | yes | Distinct process names under the automotive-service prefix. | `ProcessRecord.java:1396` |
+| `car_service_packages` | integer | yes | Distinct package names under the same prefix. Stored alongside `car_service_process_names` because the two are **not** equal, and the difference is the signal. | `Settings.java:5118` |
+| `lifecycle_counts` | object | yes | **Removed as a bare-integer object.** Per [§2.3](#23-counts-are-match-blocks) no artifact may report a bare number, and this one was the clearest violation: five integers with no `pattern`, no `raw_count`, no `coverage`, and no `suppressed_noise`. Each count is now a `counts.am_proc_*_hits` match block, and the event-log window they were measured over is carried once on `lifecycle_channel_window`. | — |
 | `lifecycle_channel_window` | object | yes | The event-log buffer's own window and coverage. See below. | `dumpstate.cpp:1028` |
-| `sources_available` / `sources_absent` | array of string | yes | Which evidence sources exist and which the platform never emits. | — |
+| `sources_available` | array of string | yes | Evidence sources found in this archive. | — |
+| `sources_absent` | array of string | yes | Evidence sources searched for and not found. **The absence is the observation; no reason is published for it.** Where the reason is known from the build (a `user`-build gate) it is recorded as an `evidence_gaps[]` entry with `reason: SECTION_ABSENT`; where it is a platform property no archive records, `reason: UNVERIFIABLE`. | — |
 
-`lifecycle_channel_window` is load-bearing:
+`lifecycle_channel_window` is load-bearing: it is the single place a reader learns that the
+event-log counts cover a fraction of the log window. Every count that depends on it must carry
+its own `coverage` block too, per invariant 2 of [§2.3](#23-counts-are-match-blocks).
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `first_event_at` / `last_event_at` | string | yes | `09-24 00:26:59.872` → `09-24 00:27:20.176`. |
-| `duration_seconds` | number | yes | 20.304. |
-| `covers_full_log_window` | boolean | yes | `false`. |
-| `coverage_ratio` | number | yes | **0.314.** |
-| `all_in_first_system_log_block` | boolean | yes | `true` — every `am_proc_*` line falls in archive lines 53824–55656, inside the **first** `SYSTEM LOG` block (9116–53708). The second block (653373–682950) contains zero. |
-| `consequence` | string | yes | The plain-language statement of what the coverage gap does to the counts. |
+| `first_event_at` / `last_event_at` | string \| null | yes | The first and last `am_proc_*` stamp. `null` when the channel is empty. |
+| `duration_seconds` | number \| null | yes | Window length. `null` when fewer than two events. |
+| `covers_full_log_window` | boolean | yes | `duration_seconds >= capture.log_window.duration_seconds`. |
+| `coverage_ratio` | number \| null | yes | `duration_seconds ÷ capture.log_window.duration_seconds`. **`null` when the window is empty.** |
+| `section_titles` | array of string | yes | Which sections the events were found in, with `section_ordinal` disambiguating repeats. Replaces `all_in_first_system_log_block`: that boolean encoded a claim about *where* events sit that is wrong on the reference archive — every `am_proc_*` line lives in the `EVENT LOG`, not in either `SYSTEM LOG` — and a boolean cannot be corrected without rewriting it. Naming the sections is both true and self-correcting. |
+| `sections_scanned` | array of object | yes | One entry per duplicate section that was searched: `{title, ordinal, start_line, end_line, matched}`. This is what makes the §2.10 Trap 1 de-duplication checkable rather than assumed. |
 
 ##### `inventory.packages[]` — `PackageEntry`
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
 | `package_name` | string | yes | **Primary key.** | `Settings.java:5118-5122` |
-| `identity_hash` | string | yes | `(2c690bd)` — `System.identityHashCode`. **Not an identity**; per-boot and allocator-dependent. Stored so a human can cross-reference a section. | `Settings.java:5120-5122` |
-| `app_id` | integer | yes | `10250`. **Join accelerator only** — reassigned on reinstall, and shared (`android.uid.system` apps all have `app_id = 1000`). | `Settings.java:5129` |
+| `identity_hash` | string | yes | The parenthesised `System.identityHashCode`. **Not an identity**; per-boot and allocator-dependent. Stored so a human can cross-reference a section. | `Settings.java:5120-5122` |
+| `app_id` | integer | yes | **Join accelerator only** — reassigned on reinstall, and shared (`android.uid.system` apps all share one `app_id`). | `Settings.java:5129` |
 | `shared_uid_name` | string \| null | yes | `android.uid.system`. **This is what makes `app_id=1000` interpretable.** | `Settings.java:5131-5133` |
 | `version_name` | string \| null | yes | | `Settings.java:5178` |
 | `version_code` / `min_sdk` / `target_sdk` | integer | yes | | `Settings.java:5154-5160` |
 | `code_path` / `resource_path` | string | yes | | `Settings.java:5136,5141` |
-| `code_path_prefix` | enum | yes | Derived: `/data/app`, `/system`, `/system_ext`, `/product`, `/vendor`, `/apex`, `other`. Feeds `tier`. | derived from `Settings.java:5136` |
-| `tier` | enum | yes | `shared_system` / `system` / `third_party` / `unknown`. **A label, never a filter.** | derived |
-| `tier_basis` | array of string | yes | The raw evidence `tier` was computed from, so it is recomputable. | derived |
+| `code_path_prefix` | enum | yes | Derived: `/data/app`, `/system`, `/system_ext`, `/product`, `/vendor`, `/apex`, `other`. **Every prefix maps to a `tier`** — the table below is exhaustive by construction, so no package can be left unclassified. | derived from `Settings.java:5136` |
+| `tier` | enum | yes | `shared_system` / `system` / `product` / `vendor` / `apex` / `third_party`. **A label, never a filter.** Computed from `code_path_prefix` and `shared_uid_name` by the table below — there is no other input and no fallback judgement. | derived |
+| `tier_basis` | object | yes | **A fixed-length array of `(field, value)` pairs, not prose.** The previous form was a sentence, which meant the reader had to trust a natural-language gloss to recompute the label. Now `tier` is mechanically derivable from `tier_basis` plus the table, and a validator can assert they agree. | derived |
 | `flags` / `private_flags` | array of string | yes | From `flags=[ … ]` and `privateFlags=[ … ]`. | `Settings.java:5185-5190` |
 | `apk_signing_version` | integer | yes | 2 for sideloaded, 3 for system. A cheap "was this sideloaded?" signal. | `Settings.java:5182-5184` |
 | `apex_module_name` | string \| null | yes | | `Settings.java:5415` |
@@ -1815,44 +1898,46 @@ log window cannot bound anything over the full window.
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
-| `user_id` | integer | yes | 0, 10. | `Settings.java:5471` |
-| `installed` | boolean | yes | `false` in user 0, `true` in user 10, for `com.example.cargearviewer`. | `Settings.java:5476-5478` |
+| `user_id` | integer | yes | The user this install-state block belongs to. | `Settings.java:5471` |
+| `installed` | boolean | yes | The printed `installed=` flag. | `Settings.java:5476-5478` |
 | `data_dir` | string \| null | yes | `null` when not installed. | `Settings.java:5503-5505` |
-| `first_install_time` | string \| null | yes | `1970-01-01 08:00:00` for the **not-installed** user is the epoch — a **sentinel, not a real install**. Must be normalised to `null` with `first_install_time_sentinel: "epoch_means_not_installed"`. | `Settings.java:5507-5509` |
-| `enabled` | integer | yes | 0 = `COMPONENT_ENABLED_STATE_DEFAULT`. | `Settings.java:5488-5489` |
+| `first_install_time` | string \| null | yes | The printed timestamp, **normalised to `null` when `installed == false`**, because the platform then prints a fixed epoch-era sentinel rather than a real time. | `Settings.java:5507-5509` |
+| `first_install_time_raw` | string | yes | The printed value verbatim, always. The normalisation rule keys off the same-line `installed` flag, which *is* archive-observable, so `first_install_time_sentinel` is unnecessary — the previous field required recognising a hardcoded platform literal, and `first_install_time_raw` lets a consumer see the bytes the decision was made on. |
+| `enabled` | integer | yes | `0` = `COMPONENT_ENABLED_STATE_DEFAULT`. | `Settings.java:5488-5489` |
 | `stopped` / `not_launched` / `hidden` / `suspended` / `quarantined` | boolean | yes | | `Settings.java:5479-5493` |
-| `ce_data_inode` / `de_data_inode` | integer \| null | yes | | `Settings.java:5472` |
-| `install_reason` / `install_reason_name` | integer / string | yes | 0 = `INSTALL_REASON_UNKNOWN`. | `Settings.java:5500-5501`; `PackageManager.java:1920` |
+| `ce_data_inode` / `de_data_inode` | integer \| null | yes | **`null` when `installed == false`**, because a not-installed user prints `0` for both and `0` is indistinguishable from a real inode. The `installed` flag on the same object is what distinguishes them; no separate reason field is needed. | `Settings.java:5472` |
+| `install_reason` / `install_reason_name` | integer / string | yes | `0` = `INSTALL_REASON_UNKNOWN`. | `Settings.java:5500-5501`; `PackageManager.java:1920` |
 
 ##### `inventory.processes[]` — `ProcessEntry`
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
 | `process_key` | string | yes | **Primary key.** `"<boot_epoch>/<start_seq>"`. | `ProcessList.java:2155-2157` |
-| `start_seq` | integer | yes | 274, 61, 2. | `ProcessRecord.java:540` |
+| `start_seq` | integer | yes | The `ProcessRecord` start sequence. | `ProcessRecord.java:540` |
 | `record_kind` | enum | yes | `persistent` / `app`, from `*PERS*` / `*APP*`. | `ProcessList.java:4469` |
-| `record_identity_hash` | string | yes | Diagnostic only. Stable across the whole crash loop for `osdouble`, which is a cheap cross-check that AOSP reuses the record. | `ProcessRecord.java:1402-1403` |
+| `record_identity_hash` | string | yes | Diagnostic only. A hash that stays constant across a crash loop is a cheap cross-check that the platform reuses the record. | `ProcessRecord.java:1402-1403` |
 | `pid` | integer | yes | **Observation attribute, not identity.** | `ProcessRecord.java:517-518` |
 | `process_name` | string | yes | The *process* name, not the package name. | `ProcessRecord.java:471-472` |
-| `runtime_key` | string | yes | `"<user_id>:<process_name>"`. **Not unique** — 13 PIDs share `0:com.android.car.cluster.osdouble`. | derived |
+| `runtime_key` | string | yes | `"<user_id>:<process_name>"`. **Not unique** — many PIDs share one `runtime_key`. | derived |
 | `attribution_key` | string | yes | `"<primary package>/<user_id>"` — the human-facing identity. | derived |
-| `user_id` / `uid` | integer | yes | `1000`, `1010250`. | `ProcessRecord.java:465-466` |
+| `user_id` / `uid` | integer | yes | The user and uid from the record. | `ProcessRecord.java:465-466` |
 | `uid_formatted` | string | yes | `u10a250` style. Decoding: `uid = user * PER_USER_RANGE(100000) + (appId + FIRST_APPLICATION_UID(10000))`; a trailing `iN` is an isolated uid offset. | `ProcessRecord.java:1378-1391` |
 | `app_id` | integer | yes | | `UserHandle.java:402` |
 | `gids` | array of integer | yes | | `ProcessRecord.java:469-478` |
 | `isolated_uid` | integer \| null | yes | Present only when `uid != info.uid`. | `ProcessRecord.java:467-469` |
 | `packages[]` | array of string | yes | From `packageList={…}`. **The authoritative process→package link.** | `ProcessRecord.java:508-509` |
 | `package_dependencies[]` | array of string | yes | `packageDependencies={…}`. Rare but real. | `ProcessRecord.java:510-517` |
-| `start_uptime_ago` | string | yes | `-108ms`. **Uptime-relative, not wall clock.** | `ProcessRecord.java:522-523` |
+| `start_uptime_ago` | string | yes | The `startUpTime` value. **Uptime-relative, not wall clock.** | `ProcessRecord.java:522-523` |
 | `start_elapsed_time_ago` | string \| null | yes | Same on the elapsed-realtime clock. | `ProcessRecord.java:524-525` |
-| `start_wall_clock` | string \| null | yes | **Derived**: `snapshot_instant + start_uptime_ago`, i.e. the wall clock of the dumpsys snapshot that printed `startUpTime`, *minus* the process's age. **Not** `boot.at + start_uptime_ago`: `startUpTime` is a relative age (`ProcessRecord.java:522` formats `nowUptime - mStartUptime`), so it must be anchored to the snapshot instant, not to boot. Carries `start_wall_clock_evidence`. | derived |
+| `start_wall_clock` | string \| null | yes | **Derived**: `snapshot_instant − start_uptime_ago`, i.e. the wall clock of the dumpsys snapshot that printed `startUpTime`, *minus* the process's age. **Not** `boot.at + start_uptime_ago`: `startUpTime` is a relative age (`ProcessRecord.java:522` formats `nowUptime − mStartUptime`), so it must be anchored to the snapshot instant, not to boot. | derived |
+| `start_wall_clock_evidence` | object | yes | **An evidence locator, not a quoted string.** `{archive_path, section_title, section_ordinal, line_start, line_end, excerpt}` — a `corroborating_evidence`-shaped object per [§2.7](#27-evidence). The previous form was a bare quoted log line with no `line_start`, so it was unverifiable under §2.7 despite claiming to be evidence. When the only source is the `Start proc` logcat line, the locator points there; when no such line exists, `start_wall_clock` is `null` and an `evidence_gaps[]` entry records it. |
 | `last_activity_time_ago` | string | yes | | `ProcessRecord.java:520-521` |
 | `persistent` / `removed` | boolean | yes | Only printed when set. | `ProcessRecord.java:527-529` |
 | `start_seq_conflict` | boolean | yes | `true` if two entries share a `start_seq`. Impossible by construction, so `true` means the two `dumpsys` snapshots disagree. Cheap integrity check. | derived |
 | `code_path` / `data_dir` | string | yes | | `ProcessRecord.java:503-505` |
 | `instruction_set` / `required_abi` | string \| null | yes | | `ProcessRecord.java:496-499` |
 | `class_name` | string \| null | yes | | `ProcessRecord.java:500-502` |
-| `compat` | string \| null | yes | `{240dpi always-compat}`. | `ProcessRecord.java:518-520` |
+| `compat` | string \| null | yes | The printed `compat={…}` braces, verbatim. | `ProcessRecord.java:518-520` |
 | `oom_adj` | object | yes | `{max, cur_raw, set_raw, cur, set}`. | oom-adj dump |
 | `oom_adj_name` | string | yes | From the LRU line: `pers`, `fg`, `vis`, `psvc`, `cch`, `sys`. | `ProcessList.java:1161-1180,4341` |
 | `cur_proc_state` / `set_proc_state` | integer | yes | | process-state dump |
@@ -1860,7 +1945,7 @@ log window cannot bound anything over the full window.
 | `lru` | object | yes | `{index, oom_adj_name, capability, flags, fixed, service, top_activity, client, cch_empty}`. | `ProcessList.java:4333-4400` |
 | `services[]` / `providers[]` / `receivers[]` / `connections[]` | array | yes | Component wiring. **`crashes.json` reads these; it does not re-parse them.** | `ProcessRecord.java:559-563` |
 | `lifecycle_refs` | array of object | yes | `{event_kind, at, event_seq_index}` linking to `lifecycle_events[]`. | derived |
-| `provenance` | object | yes | | — |
+| `provenance` | object | yes | See [§2.4](#24-provenance). **No `lifecycle_unresolved_reason`.** A ~380-character paragraph inside a `ProcessEntry` is prose, and on the reference artifact it disagreed with `attribution.unresolved[]` about the vocabulary. There is now one place to look — `attribution.unresolved[]`, keyed by `reason` + `count` — and it carries no sentence. | — |
 
 ##### `lifecycle_events[]`
 
@@ -1877,7 +1962,7 @@ log window cannot bound anything over the full window.
 | `oom_adj` | integer \| null | yes | `am_proc_died`, `am_kill`. | `logtags:22,34` |
 | `reason` | string \| null | yes | `am_kill` only. | `logtags:34` |
 | `rss_kb` | integer \| null | yes | `am_kill` only (`Rss\|2\|2`). | `logtags:34` |
-| `process_key` | string \| null | yes | `null` with `unresolved_reason` when no `ProcessRecord` interval contains `at`. | derived |
+| `process_key` | string \| null | yes | `null` when no `ProcessRecord` interval contains `at`, with the cause recorded in `attribution.unresolved[]` rather than in a prose field on the event. | derived |
 | `provenance` | object | yes | Carries `block_index` to disambiguate the two `SYSTEM LOG` blocks, and `channel_window` so a consumer can see the event sits inside a short-retention buffer. | — |
 
 > **The logcat uid column is a `getpwuid` name when it is ≤ 5 characters, else a decimal uid,
@@ -1894,23 +1979,25 @@ log window cannot bound anything over the full window.
 | `at` | string | yes | **Second granularity, unlike logcat's milliseconds.** | `UserUsageStatsService.java:1087` |
 | `type` | string | yes | `ACTIVITY_RESUMED`, `ACTIVITY_STOPPED`, `USER_UNLOCKED`, `SCREEN_INTERACTIVE`, … | `UserUsageStatsService.java:1088-1124` |
 | `package_name` / `class_name` | string | yes | **This is what ties a crash loop to a specific activity.** | same |
-| `range_header_form` | enum | yes | `timeRange_locale` or `beginTime_endTime_epoch_ms` — two mutually exclusive renderings. | `UserUsageStatsService.java:1157-1163` |
 | `range_raw` | string | yes | Verbatim. The locale form contains U+202F narrow no-break spaces and an en dash — **do not regex-split on a space.** | same |
-| `user_id` | integer \| null | yes | See open questions. | — |
-| `stale_relative_to_capture_seconds` | integer \| null | yes | Meaningful only because the range header is parsed into a real interval. | derived |
+| `user_id` | integer \| null | yes | The user the enclosing `usagestats` block declares. **The `ACTIVITY_*` line itself carries no `user=` field**, so this is a block-level join; where the enclosing block declares no user, the value is `null` and an `evidence_gaps[]` entry records it. The open question this field carried is **closed**: the archive does contain a block for a second user, so coverage is not user-0-only. | — |
+| `range_header_form` | enum | yes | **Moved to the `channels[]` entry for this section.** It is a property of *which dumpsys invocation produced the section*, not of an individual event, and two invocations render it differently — modelling it per-event let a parser merge a locale-formatted window with an epoch-millisecond one and produce a 24-hour span. | `UserUsageStatsService.java:1157-1163` |
+| `range_window_seconds` | number \| null | yes | The interval parsed from the section's range header, so a consumer can tell whether these events describe the log window or something far wider. `null` when the header carries no year or no offset and the interval therefore cannot be reconstructed — on the reference archive the offset is recoverable only from the `----- pid N at … -----` stamps inside the block, which is a reconstruction, not a read. | derived |
 
 ##### `attribution`
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `kill_sources` | object | yes | `{ am_kill_events: 0, ams_crash_loop_kills: 273, app_errors_am_process_crashed_too_much: 38 }`. **Three disjoint buckets, never summed into one `kills` number.** |
-| `kill_source_completeness` | object | yes | Per-bucket completeness. `am_kill` is complete for the window; `am_proc_died` is **partial** (0.314 coverage). |
-| `pid_reuse` | object | yes | `{worst_process, pid_first, pid_last, pid_delta, window_first, window_last, window_seconds, estimated_full_pid_cycles, start_proc_events, conclusion}`. |
-| `unresolved[]` | array of object | yes | Events that could not be joined, each with a `reason` and a `count`. |
+| `kill_sources` | object | yes | `{ am_kill_events, ams_crash_loop_kill_lines, app_errors_am_process_crashed_too_much }`. **Three disjoint buckets, never summed into one `kills` number.** The second key is renamed from `ams_crash_loop_kills` to `…_kill_lines`: the bytes are a logcat line, not a kill notification, and calling them *kills* asserted an attribution the archive does not carry. |
+| `kill_source_coverage` | object | yes | **Renamed from `kill_source_completeness`, and the verdict strings are removed.** One entry per bucket: `{ channel, window_start, window_end, coverage_ratio, covers_log_window }` — the same numbers `channels[]` already carries. A prose verdict like `"complete_for_the_window"` or a 100-character `"PARTIAL — …"` is a judgment about completeness that no archive byte settles: a zero in a channel covering a third of the log window cannot establish absence over the rest of it. |
+| `pid_reuse` | object | yes | `{worst_process, pid_first, pid_last, distinct_pid_count, pid_max, window_first, window_last, window_seconds, start_proc_events}`. **`pid_delta` and `estimated_full_pid_cycles` are removed** — a PID *range span* is not a count, and dividing it by an assumed cycle size found nowhere in the archive produced a number [§5.2](#52-corrected-facts) has already retracted. `distinct_pid_count` and `pid_max` answer the recycling question with two measured values: if `distinct_pid_count` approaches the event count, PIDs are not being reused. `conclusion` is removed with the rest; the identity model above already states it. |
+| `unresolved[]` | array of object | yes | Events that could not be joined, each with a `reason` from **one closed enum** shared by `unresolved[]` and `lifecycle_events[].unresolved_reason`: `no_process_record`, `outside_snapshot_range`, `isolated_uid`, plus `count`. The reference artifact used two different vocabularies for the same field and prefixed prose onto the enum value, which made the value unusable as a join key. |
 
-`am_kill: 0` is a **load-bearing fact**, not an absence: it proves there was no
-memory-pressure kill in the window, so the churn is AMS-initiated only. It must be emitted as a
-distinct counter from `ams_crash_loop_kills`, never merged.
+`am_kill: 0` is a **bounded negative**, not a proof. The event-log buffer covers a fraction of
+the log window, so the honest claim is *"no `am_kill` event in the covered interval"*, and
+`kill_source_coverage` is what makes that bound visible. Any consumer wanting to assert no
+memory-pressure kill across the whole window must read `/proc/vmstat oom_kill` from `memory.json`,
+which is a different channel with a different window.
 
 ##### `inventory.index`
 
@@ -1993,121 +2080,152 @@ of [§2.3](#23-counts-are-match-blocks) exists to eliminate.
 
   "capture_ref": {
     "source": "system.json#/capture",
-    "boot_epoch": "2026-09-24T00:26:47.33+07:00",
-    "boot_epoch_uncertainty_seconds": 0.10,
-    "uptime_seconds_at_start": 30.2,
-    "at_snapshot_dumpsys_activity_seconds": 42.016
+    "boot_epoch": "<boot.at>",
+    "boot_epoch_uncertainty_seconds": <uncertainty_seconds>,
+    "uptime_seconds_at_start": <seconds>,
+    "at_snapshot_dumpsys_activity_seconds": <seconds>
   },
 
   "channels": [
     { "name": "logcat_main", "present": true,
-      "first_at": "09-24 00:26:47.418", "last_at": "09-24 00:27:52.080",
-      "duration_seconds": 64.662, "covers_log_window": true, "coverage_ratio": 1.0,
-      "incomplete_reason": null,
+      "first_at": "MM-DD HH:MM:SS.mmm", "last_at": "MM-DD HH:MM:SS.mmm",
+      "duration_seconds": <log_window_seconds>, "covers_log_window": true, "coverage_ratio": 1.0,
+      "incomplete_reason": null, "snapshot_at": null,
       "blocks": [
-        { "index": 0, "command": "logcat -v threadtime -v printable -v uid -d *:v", "line_start": 9116, "line_end": 53708 },
-        { "index": 1, "command": "logcat -v threadtime -v printable -v uid -d *:v -T 2026-09-24 00:27:20.000", "line_start": 653373, "line_end": 682950 }
+        { "index": 0, "command": "<logcat argv, first block>", "line_start": <line>, "line_end": <line> },
+        { "index": 1, "command": "<logcat argv, -T bounded second block>", "line_start": <line>, "line_end": <line> }
       ],
-      "carries": ["Start proc (277)", "has crashed too many times, killing! (273)", "am_proc_* events"] },
+      "carries": ["Start proc", "has crashed too many times, killing!", "am_* events"] },
     { "name": "am_proc_event_log", "present": true,
-      "first_at": "09-24 00:26:59.872", "last_at": "09-24 00:27:20.176",
-      "duration_seconds": 20.304, "covers_log_window": false, "coverage_ratio": 0.314,
-      "incomplete_reason": "event_log_buffer_retention",
-      "carries": ["am_proc_start (121)", "am_proc_bound (121)", "am_proc_died (40)", "am_kill (0)"] },
-    { "name": "dumpsys_activity_processes", "present": true, "snapshot_at": "2026-09-24T00:27:41.898+07:00",
-      "covers_log_window": null, "incomplete_reason": null,
-      "carries": ["PID mappings (83)", "Process LRU list (83)", "*APP*/*PERS* records (83)"] },
-    { "name": "dumpsys_package", "present": true, "snapshot_at": "2026-09-24T00:27:48+07:00",
-      "duration_seconds": 0.831, "covers_log_window": null, "incomplete_reason": null,
-      "carries": ["Package [ blocks (282)", "SharedUser [ blocks (14)", "per-user state blocks (594)"] },
+      "first_at": "MM-DD HH:MM:SS.mmm", "last_at": "MM-DD HH:MM:SS.mmm",
+      "duration_seconds": <event_log_seconds>, "covers_log_window": false, "coverage_ratio": <coverage_ratio>,
+      "incomplete_reason": "event_log_buffer_retention", "snapshot_at": null,
+      "blocks": [{ "index": 0, "command": "<section_title>", "line_start": <line>, "line_end": <line> }],
+      "carries": ["am_proc_start", "am_proc_bound", "am_proc_died", "am_kill", "am_uid_running", "am_uid_active"] },
+    { "name": "dumpsys_activity_processes", "present": true, "snapshot_at": "<captured_at>",
+      "duration_seconds": null, "first_at": null, "last_at": null,
+      "covers_log_window": null, "coverage_ratio": null, "incomplete_reason": null, "blocks": [],
+      "carries": ["PID mappings", "Process LRU list", "*APP*/*PERS* records"] },
+    { "name": "dumpsys_package", "present": true, "snapshot_at": "<captured_at>",
+      "duration_seconds": <duration_seconds>, "first_at": null, "last_at": null,
+      "covers_log_window": null, "coverage_ratio": null, "incomplete_reason": null, "blocks": [],
+      "carries": ["Package [ blocks", "SharedUser [ blocks", "per-user state blocks"] },
     { "name": "usagestats", "present": true,
-      "range_header_form": "timeRange_locale",
-      "range_raw": "9/23/2026, 12:27 AM – 9/24/2026, 12:27 AM",
+      "snapshot_at": "<captured_at>", "duration_seconds": null, "first_at": null, "last_at": null,
       "covers_log_window": false, "coverage_ratio": null,
-      "incomplete_reason": "second_granularity_only; user coverage unverified" },
-    { "name": "pm_list_packages", "present": false, "covers_log_window": null,
-      "incomplete_reason": "not_emitted_by_platform — dumpstate never invokes 'pm list packages'" }
+      "incomplete_reason": "permission_denied", "blocks": [],
+      "carries": ["ACTIVITY_RESUMED", "ACTIVITY_STOPPED"],
+      "range_header_form": "timeRange_locale",
+      "range_raw": "<verbatim range header, U+202F and en dash intact>",
+      "range_window_seconds": null },
+    { "name": "fs_archive", "present": true, "snapshot_at": null,
+      "duration_seconds": null, "first_at": null, "last_at": null,
+      "covers_log_window": null, "coverage_ratio": null, "incomplete_reason": null, "blocks": [],
+      "carries": ["FS/** ZIP entries"] },
+    { "name": "pm_list_packages", "present": false,
+      "snapshot_at": null, "duration_seconds": null, "first_at": null, "last_at": null,
+      "covers_log_window": null, "coverage_ratio": null, "incomplete_reason": null,
+      "blocks": [], "carries": [] }
   ],
 
   "inventory": {
     "counts": {
-      "packages": 282, "processes": 83, "processes_persistent": 9, "processes_app": 74,
-      "distinct_process_names": 58, "packages_with_live_process": 58,
-      "users": 2, "shared_uids": 14, "package_user_state_blocks": 594,
-      "lru": { "total": 83, "non_activity": 4, "non_service": 4 },
-      "car_service_process_names": 13,
-      "car_service_packages": 100,
-      "lifecycle_counts": { "am_proc_start": 121, "am_proc_bound": 121, "am_proc_died": 40,
-                            "am_kill": 0, "am_process_crashed_too_much": 38 },
+      "packages": <n>, "processes": <n>, "processes_persistent": <n>, "processes_app": <n>,
+      "distinct_process_names": <n>, "installed_packages_with_live_process": <n>,
+      "users": <n>, "shared_uids": <n>, "package_user_state_blocks": <n>,
+      "lru": { "total": <n>, "non_activity": <n>, "non_service": <n> },
+      "car_service_process_names": <n>,
+      "car_service_packages": <n>,
       "lifecycle_channel_window": {
-        "first_event_at": "09-24 00:26:59.872", "last_event_at": "09-24 00:27:20.176",
-        "duration_seconds": 20.304, "covers_full_log_window": false, "coverage_ratio": 0.314,
-        "all_in_first_system_log_block": true,
-        "consequence": "am_proc_died = 40 against 271 real process deaths; a 6.9x undercount caused purely by event-log buffer retention, not by the absence of deaths. lifecycle_counts MUST be reported alongside this window, never as a window total."
+        "first_event_at": "MM-DD HH:MM:SS.mmm", "last_event_at": "MM-DD HH:MM:SS.mmm",
+        "duration_seconds": <event_log_seconds>, "covers_full_log_window": false,
+        "coverage_ratio": <coverage_ratio>,
+        "section_titles": ["<section_title>"],
+        "sections_scanned": [
+          { "title": "<section_title>", "ordinal": 0, "start_line": <line>, "end_line": <line>, "matched": <n> },
+          { "title": "<section_title>", "ordinal": 1, "start_line": <line>, "end_line": <line>, "matched": 0 }
+        ]
       },
-      "sources_absent": ["pm list packages -f -U -i (dumpstate never invokes it)",
-                         "dumpsys package <pkg> (no per-package section exists)"]
+      "sources_available": ["dumpsys package", "dumpsys activity processes", "am_proc event log",
+                            "usagestats", "logcat main", "FS/** ZIP entries"],
+      "sources_absent": ["pm list packages -f -U -i", "per-package dumpsys section"]
+    },
+    "counts_am_proc_hits": {
+      "_note": "each am_proc_* count is a match block per §2.3; abbreviated here to two keys",
+      "am_proc_died_hits": {
+        "pattern": "am_proc_died", "pattern_kind": "tag", "case_sensitive": true,
+        "raw_count": <n>, "matched_evidence": <n>, "suppressed_noise": 0, "not_emitted_by_platform": 0,
+        "coverage": { "window_start": "MM-DD HH:MM:SS.mmm", "window_end": "MM-DD HH:MM:SS.mmm",
+                      "archive_window": "capture.log_window", "coverage_ratio": <coverage_ratio> },
+        "regions": [{ "archive_path": "<main_entry>", "section_title": "<section_title>",
+                      "section_ordinal": 0, "line_start": <line>, "line_end": <line>, "line_count": <n> }]
+      },
+      "am_kill_hits": {
+        "pattern": "am_kill", "pattern_kind": "tag", "case_sensitive": true,
+        "raw_count": 0, "matched_evidence": 0, "suppressed_noise": 0, "not_emitted_by_platform": 0,
+        "coverage": { "window_start": "MM-DD HH:MM:SS.mmm", "window_end": "MM-DD HH:MM:SS.mmm",
+                      "archive_window": "capture.log_window", "coverage_ratio": <coverage_ratio> },
+        "regions": []
+      }
     },
 
     "packages": [
-      { "package_name": "com.example.cargearviewer",
-        "identity_hash": "2c690bd", "app_id": 10250, "shared_uid_name": null,
+      { "package_name": "<package_name>",
+        "identity_hash": "<hex>", "app_id": <n>, "shared_uid_name": null,
         "tier": "third_party",
-        "tier_basis": ["code_path_prefix=/data/app", "package_source=1 (PACKAGE_SOURCE_OTHER)",
-                       "apk_signing_version=2", "flags lacks SYSTEM"],
-        "version_name": "1.0", "version_code": 1, "min_sdk": 34, "target_sdk": 34,
-        "code_path": "/data/app/~~TcNBmEythAusZaikmQt8LA==/com.example.cargearviewer-6-hqvlHi41x3ARGzVmXAbQ==",
+        "tier_basis": [["code_path_prefix", "/data/app"], ["package_source", 1],
+                       ["apk_signing_version", 2], ["flags_has_SYSTEM", false]],
+        "version_name": "<n>", "version_code": <n>, "min_sdk": <n>, "target_sdk": <n>,
+        "code_path": "/data/app/~~<hash>==/<package_name>-<n>-<hash>==",
         "code_path_prefix": "/data/app",
         "flags": ["DEBUGGABLE","HAS_CODE","ALLOW_CLEAR_USER_DATA","TEST_ONLY","ALLOW_BACKUP"],
         "apk_signing_version": 2,
         "package_source": 1, "package_source_name": "PACKAGE_SOURCE_OTHER",
-        "initiating_package_name": "com.android.shell",
-        "last_update_time": "2026-09-24 00:27:06",
-        "install_permissions": ["com.example.cargearviewer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
-                                "android.car.permission.CAR_POWERTRAIN"],
+        "initiating_package_name": "<initiating_package_name>",
+        "last_update_time": "<YYYY-MM-DD> HH:MM:SS",
+        "install_permissions": ["<package_name>.<permission>", "<vendor.permission>.<name>"],
         "users": [
           { "user_id": 0, "installed": false, "data_dir": null, "enabled": 0,
-            "first_install_time": null, "first_install_time_sentinel": "epoch_means_not_installed",
+            "first_install_time": null, "first_install_time_raw": "<epoch-era sentinel, verbatim>",
+            "ce_data_inode": null, "de_data_inode": null,
             "install_reason": 0, "stopped": true },
           { "user_id": 10, "installed": true,
-            "data_dir": "/data/user/10/com.example.cargearviewer",
-            "ce_data_inode": 278835, "de_data_inode": 107122, "enabled": 0,
-            "first_install_time": "2026-05-18 23:51:03",
+            "data_dir": "/data/user/10/<package_name>",
+            "ce_data_inode": <n>, "de_data_inode": <n>, "enabled": 0,
+            "first_install_time": "<YYYY-MM-DD> HH:MM:SS",
             "install_reason": 0, "stopped": false, "not_launched": false }
         ],
         "provenance": { "evidence_origin": "dumpsys_package", "archive_path": "<main_entry>",
-          "section_title": "DUMP OF SERVICE package:", "section_ordinal": 0,
-          "line_start": 547055, "line_end": 547120,
-          "captured_at": "2026-09-24T00:27:06+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-          "age_seconds_at_capture": 11, "capture_kind": "disk_artifact",
+          "section_title": "<section_title>", "section_ordinal": 0,
+          "line_start": <line>, "line_end": <line>,
+          "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+          "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact",
           "freshness": "now",
           "freshness_basis": { "input": "lastUpdateTime",
-            "basis": "package installed 11 s before capture — this is the only package updated during this boot",
+            "basis": "package updated within the same boot as capture",
             "threshold_seconds": 3600 },
-          "collector_perturbed": false,
-          "collector_perturbed_basis": "read from a 0.831s dumpsys package pass" } },
+          "collector_perturbed": false } },
 
-      { "package_name": "com.android.car.cluster.osdouble",
-        "identity_hash": "a344387", "app_id": 1000, "shared_uid_name": "android.uid.system",
+      { "package_name": "<automotive_system_package>",
+        "identity_hash": "<hex>", "app_id": <n>, "shared_uid_name": "android.uid.system",
         "tier": "shared_system",
-        "tier_basis": ["sharedUser=SharedUserSetting{2af2641 android.uid.system/1000}",
-                       "app_id=1000 < FIRST_APPLICATION_UID",
-                       "flags contains SYSTEM and PERSISTENT"],
-        "version_name": "15", "version_code": 35, "min_sdk": 35, "target_sdk": 35,
-        "code_path": "/system/app/ClusterOsDouble", "code_path_prefix": "/system",
+        "tier_basis": [["shared_uid_name", "android.uid.system"], ["code_path_prefix", "/system"],
+                       ["flags_has_SYSTEM", true]],
+        "version_name": "<n>", "version_code": <n>, "min_sdk": <n>, "target_sdk": <n>,
+        "code_path": "/system/app/<AppDir>", "code_path_prefix": "/system",
         "flags": ["SYSTEM","HAS_CODE","PERSISTENT","ALLOW_CLEAR_USER_DATA","ALLOW_BACKUP"],
         "apk_signing_version": 3,
         "package_source": 0, "package_source_name": "PACKAGE_SOURCE_UNSPECIFIED",
-        "last_update_time": "2026-05-18 23:50:51",
+        "last_update_time": "<YYYY-MM-DD> <HH:MM:SS>",
         "users": [
           { "user_id": 0, "installed": true,
-            "data_dir": "/data/user/0/com.android.car.cluster.osdouble",
-            "ce_data_inode": 344111, "de_data_inode": 90256,
-            "first_install_time": "2026-05-18 23:50:51", "enabled": 0, "stopped": false }
+            "data_dir": "/data/user/0/<package_name>",
+            "ce_data_inode": <inode>, "de_data_inode": <inode>,
+            "first_install_time": "<YYYY-MM-DD> <HH:MM:SS>", "enabled": 0, "stopped": false }
         ],
-        "provenance": { "captured_at": "2026-05-18T23:50:51+07:00",
+        "provenance": { "captured_at": "<captured_at>",
           "captured_at_time_base": "dumpsys_section_snapshot",
-          "age_seconds_at_capture": 11061386, "capture_kind": "disk_artifact",
+          "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact",
           "freshness": "stale",
           "freshness_basis": { "input": "lastUpdateTime",
             "basis": "system package last updated 128 days before capture",
@@ -2116,80 +2234,86 @@ of [§2.3](#23-counts-are-match-blocks) exists to eliminate.
     ],
 
     "processes": [
-      { "process_key": "2026-09-24T00:26:47.33+07:00/274", "start_seq": 274,
-        "record_kind": "persistent", "record_identity_hash": "52f575b", "pid": 7760,
-        "process_name": "com.android.car.cluster.osdouble",
-        "runtime_key": "0:com.android.car.cluster.osdouble",
-        "attribution_key": "com.android.car.cluster.osdouble/0",
-        "user_id": 0, "uid": 1000, "uid_formatted": "1000", "app_id": 1000,
-        "gids": [1065,3002,3003,3001,3007,1007,1000,9997,1079,1077],
+      { "process_key": "<boot_epoch>/<start_seq>", "start_seq": <n>,
+        "record_kind": "persistent", "record_identity_hash": "<hex>", "pid": <pid>,
+        "process_name": "<process_name>",
+        "runtime_key": "<user_id>:<process_name>",
+        "attribution_key": "<package_name>/<user_id>",
+        "user_id": 0, "uid": <uid>, "uid_formatted": "<uid_formatted>", "app_id": <app_id>,
+        "gids": [<gids>],
         "isolated_uid": null,
-        "packages": ["com.android.car.cluster.osdouble"], "package_dependencies": [],
-        "start_uptime_ago": "-108ms", "start_elapsed_time_ago": "-108ms",
-        "start_wall_clock": "2026-09-24T00:27:41.784+07:00",
-        "start_wall_clock_evidence": "logcat: 'Start proc 7760:com.android.car.cluster.osdouble/1000 for restart …'",
-        "last_activity_time_ago": "-56ms",
+        "packages": ["<package_name>"], "package_dependencies": [],
+        "start_uptime_ago": "-<N>ms", "start_elapsed_time_ago": "-<N>ms",
+        "start_wall_clock": "<captured_at>",
+        "start_wall_clock_evidence": { "archive_path": "<main_entry>", "kind": "line_range",
+          "section_title": "<section_title>", "section_ordinal": 0,
+          "locator": { "line_start": <line>, "line_end": <line> },
+          "excerpt": "<verbatim Start proc line>", "excerpt_truncated": false,
+          "excerpt_bytes": <n>, "excerpt_complete": true },
+        "last_activity_time_ago": "-<N>ms",
         "persistent": true, "removed": false, "start_seq_conflict": false,
-        "code_path": "/system/app/ClusterOsDouble/ClusterOsDouble.apk",
-        "data_dir": "/data/user/0/com.android.car.cluster.osdouble",
-        "instruction_set": "arm64", "required_abi": "arm64-v8a",
-        "class_name": "com.android.car.cluster.osdouble.ClusterOsDoubleApplication",
-        "compat": "{240dpi always-compat}",
-        "oom_adj": { "max": -800, "cur_raw": -800, "set_raw": -800, "cur": -800, "set": -800 },
-        "cur_proc_state": 1, "set_proc_state": 1, "capability": "LCMNFUA",
-        "lru": { "index": 77, "oom_adj_name": "pers", "capability": "LCMNFUA", "flags": "PERU", "fixed": true },
-        "providers": ["androidx.startup.InitializationProvider"],
+        "code_path": "/system/app/<AppDir>/<App>.apk",
+        "data_dir": "/data/user/<user_id>/<package_name>",
+        "instruction_set": "<isa>", "required_abi": "<abi>",
+        "class_name": "<package_name>.<ApplicationClass>",
+        "compat": "<compat braces, verbatim>",
+        "oom_adj": { "max": <n>, "cur_raw": <n>, "set_raw": <n>, "cur": <n>, "set": <n> },
+        "cur_proc_state": <n>, "set_proc_state": <n>, "capability": "<7-char raw>",
+        "lru": { "index": <n>, "oom_adj_name": "<name>", "capability": "<7-char raw>",
+                 "flags": "<flags column>", "fixed": true },
+        "providers": ["<provider_class>"],
         "lifecycle_refs": [],
-        "lifecycle_unresolved_reason": "out_of_channel: the am_proc_* event log ends at 09-24 00:27:20.176 but this instance started at 00:27:41.784; its events fall outside the event-log buffer's retention window, so they are UNOBSERVABLE there even though the main logcat buffer still has them",
-        "provenance": { "evidence_origin": "dumpsys_activity_processes", "section_title": "DUMP OF SERVICE activity:",
-          "section_ordinal": 0, "line_start": 389256, "line_end": 389420,
-          "captured_at": "2026-09-24T00:27:41.898+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-          "age_seconds_at_capture": 24.898, "capture_kind": "point_in_time_snapshot",
+        "provenance": { "evidence_origin": "dumpsys_activity_processes",
+          "archive_path": "<main_entry>",
+          "section_title": "<section_title>", "section_ordinal": 0,
+          "line_start": <line>, "line_end": <line>,
+          "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+          "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot",
           "freshness": "now",
-          "freshness_basis": { "input": "dumpsys footer 'ending at: 2026-09-24 00:27:42'",
+          "freshness_basis": { "input": "dumpsys footer 'ending at: HH:MM:SS'",
             "basis": "process liveness is only true at the snapshot instant",
-            "threshold_seconds": 3600 },
-          "collector_perturbed": false,
-          "collector_perturbed_basis": "dumpsys activity -v all; dumpstate.cpp:1627" } },
-
-      { "process_key": "2026-09-24T00:26:47.33+07:00/2", "start_seq": 2,
-        "record_kind": "persistent", "record_identity_hash": "d78a714", "pid": 944,
-        "process_name": "com.android.car", "runtime_key": "0:com.android.car",
-        "attribution_key": "com.android.car/0",
-        "user_id": 0, "uid": 1000, "app_id": 1000,
-        "packages": ["com.android.car"], "package_dependencies": ["com.android.car.updatable"],
-        "start_uptime_ago": "-42s16ms",
-        "start_wall_clock": "2026-09-24T00:26:59.882+07:00",
-        "persistent": true,
-        "code_path": "/system/priv-app/CarService/CarService.apk",
-        "oom_adj": { "max": -800, "cur": -800, "set": -800 },
-        "lru": { "index": 81, "oom_adj_name": "pers", "flags": "F/ /PER", "fixed": true },
-        "provenance": { "captured_at": "2026-09-24T00:27:41.898+07:00",
-          "captured_at_time_base": "dumpsys_section_snapshot",
-          "age_seconds_at_capture": 24.898, "capture_kind": "point_in_time_snapshot",
-          "freshness": "now",
-          "freshness_basis": { "input": "dumpsys footer",
-            "basis": "this record is the uptime anchor for system.json",
             "threshold_seconds": 3600 },
           "collector_perturbed": false } },
 
-      { "process_key": "2026-09-24T00:26:47.33+07:00/61", "start_seq": 61,
-        "record_kind": "app", "record_identity_hash": "a4eb6e5", "pid": 2818,
-        "process_name": "com.example.cargearviewer",
-        "runtime_key": "10:com.example.cargearviewer",
-        "attribution_key": "com.example.cargearviewer/10",
-        "user_id": 10, "uid": 1010250, "uid_formatted": "u10a250", "app_id": 10250,
-        "gids": [50250, 20250, 1009997],
-        "packages": ["com.example.cargearviewer"],
-        "start_uptime_ago": "-32s331ms",
-        "start_wall_clock": "2026-09-24T00:27:10.551+07:00",
-        "last_activity_time_ago": "-31s669ms",
-        "persistent": false,
-        "oom_adj": { "max": 100, "cur": 100, "set": 100 },
-        "lru": { "index": 1, "oom_adj_name": "fg", "capability": "T/A/TOP", "top_activity": true },
-        "provenance": { "captured_at": "2026-09-24T00:27:41.898+07:00",
+      { "process_key": "<boot_epoch>/<start_seq>", "start_seq": <n>,
+        "record_kind": "persistent", "record_identity_hash": "<hex>", "pid": <pid>,
+        "process_name": "<system_process_name>", "runtime_key": "<user_id>:<process_name>",
+        "attribution_key": "<package_name>/<user_id>",
+        "user_id": 0, "uid": <uid>, "app_id": <app_id>,
+        "packages": ["<package_name>"], "package_dependencies": ["<package_name>"],
+        "start_uptime_ago": "-<N>s<N>ms",
+        "start_wall_clock": "<captured_at>",
+        "persistent": true,
+        "code_path": "/system/priv-app/<AppDir>/<App>.apk",
+        "oom_adj": { "max": <n>, "cur_raw": <n>, "set_raw": <n>, "cur": <n>, "set": <n> },
+        "lru": { "index": <n>, "oom_adj_name": "<name>", "capability": "<7-char raw>",
+                 "flags": "<flags column>", "fixed": true },
+        "provenance": { "captured_at": "<captured_at>",
           "captured_at_time_base": "dumpsys_section_snapshot",
-          "age_seconds_at_capture": 24.898, "capture_kind": "point_in_time_snapshot",
+          "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot",
+          "freshness": "now",
+          "freshness_basis": { "input": "dumpsys footer", "basis": "liveness at the snapshot instant",
+            "threshold_seconds": 3600 },
+          "collector_perturbed": false } },
+
+      { "process_key": "<boot_epoch>/<start_seq>", "start_seq": <n>,
+        "record_kind": "app", "record_identity_hash": "<hex>", "pid": <pid>,
+        "process_name": "<package_name>",
+        "runtime_key": "<user_id>:<package_name>",
+        "attribution_key": "<package_name>/<user_id>",
+        "user_id": <n>, "uid": <uid>, "uid_formatted": "<uid_formatted>", "app_id": <app_id>,
+        "gids": [<gids>],
+        "packages": ["<package_name>"],
+        "start_uptime_ago": "-<N>s<N>ms",
+        "start_wall_clock": "<captured_at>",
+        "last_activity_time_ago": "-<N>s<N>ms",
+        "persistent": false,
+        "oom_adj": { "max": <n>, "cur_raw": <n>, "set_raw": <n>, "cur": <n>, "set": <n> },
+        "lru": { "index": <n>, "oom_adj_name": "<name>", "capability": "<7-char raw>",
+                 "flags": "<flags column>", "top_activity": true },
+        "provenance": { "captured_at": "<captured_at>",
+          "captured_at_time_base": "dumpsys_section_snapshot",
+          "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot",
           "freshness": "now",
           "freshness_basis": { "input": "dumpsys footer", "basis": "liveness at the snapshot instant",
             "threshold_seconds": 3600 },
@@ -2197,54 +2321,55 @@ of [§2.3](#23-counts-are-match-blocks) exists to eliminate.
     ],
 
     "index": {
-      "package_to_process_keys": { "com.android.car": ["…/2"], "com.android.car.cluster.osdouble": ["…/274"] },
+      "package_to_process_keys": { "<package_name>": ["…/<start_seq>"] },
       "process_name_to_packages": {
-        "system": ["android", "com.android.providers.settings", "com.android.server.telecom", "com.android.location.fused"],
-        ".adservices": ["com.google.android.adservices.api"]
+        "system": ["android", "com.android.providers.<name>", "com.android.server.<name>"],
+        ".<suffix>": ["com.<vendor>.<suffix>.api"]
       },
-      "unmapped_process_names": { "count": 12,
-        "examples": ["system", "android.process.media", "android.process.acore",
-                     "android.car.usb.handler", ".adservices", "WebViewLoader-arm64-v8a"] }
+      "unmapped_process_names": { "count": <n>,
+        "examples": ["system", "android.process.<media>", "android.car.<usb>.handler",
+                     ".<suffix>", "<WebViewLoader>"] }
     }
   },
 
   "lifecycle_events": [
-    { "kind": "am_proc_start", "at": "09-24 00:26:59.882",
-      "uid_column_raw": "1000", "pid": 944, "tid": 718,
-      "user_id": 0, "start_uid": 1000, "process_name": "com.android.car",
+    { "kind": "am_proc_start", "at": "MM-DD HH:MM:SS.mmm",
+      "uid_column_raw": "<uid column, verbatim>", "pid": <pid>, "tid": <tid>,
+      "user_id": <n>, "start_uid": <uid>, "process_name": "<process_name>",
       "hosting_type": "service",
-      "hosting_component": "{com.android.car/com.android.car.CarService}",
-      "process_key": "2026-09-24T00:26:47.33+07:00/2",
-      "provenance": { "section_title": "SYSTEM LOG", "section_ordinal": 0, "line_start": 27853,
-        "captured_at": "2026-09-24T00:26:59.882+07:00", "captured_at_time_base": "logcat_line",
-        "age_seconds_at_capture": 17.118, "capture_kind": "live_log", "freshness": "now",
+      "hosting_component": "{<package>/<package>.<ServiceClass>}",
+      "process_key": "<boot_epoch>/<start_seq>",
+      "provenance": { "section_title": "<section_title>", "section_ordinal": 0,
+        "line_start": <line>, "captured_at": "<captured_at>",
+        "captured_at_time_base": "logcat_line",
+        "age_seconds_at_capture": <age>, "capture_kind": "live_log", "freshness": "now",
         "freshness_basis": { "input": "logcat line stamp", "basis": "inside capture.log_window",
           "threshold_seconds": 3600 },
         "collector_perturbed": false } },
-    { "kind": "am_proc_start", "at": "09-24 00:26:59.872",
-      "uid_column_raw": "1000", "pid": 937, "tid": 718, "user_id": 0, "start_uid": 1037,
-      "process_name": "WebViewLoader-arm64-v8a", "hosting_type": "", "hosting_component": "",
+    { "kind": "am_proc_start", "at": "MM-DD HH:MM:SS.mmm",
+      "uid_column_raw": "<uid column, verbatim>", "pid": <pid>, "tid": <tid>,
+      "user_id": <n>, "start_uid": <uid>,
+      "process_name": "<WebViewLoader process>", "hosting_type": "", "hosting_component": "",
       "process_key": null,
-      "unresolved_reason": "no_process_record: process had already exited by the 00:27:42 snapshot; pid 937 is absent from PID mappings",
-      "provenance": { "section_title": "SYSTEM LOG", "section_ordinal": 0, "line_start": 53824,
-        "captured_at": "2026-09-24T00:26:59.872+07:00", "captured_at_time_base": "logcat_line",
-        "age_seconds_at_capture": 17.128, "capture_kind": "live_log", "freshness": "now",
+      "provenance": { "section_title": "<section_title>", "section_ordinal": 0,
+        "line_start": <line>, "captured_at": "<captured_at>",
+        "captured_at_time_base": "logcat_line",
+        "age_seconds_at_capture": <age>, "capture_kind": "live_log", "freshness": "now",
         "freshness_basis": { "input": "logcat line stamp", "basis": "inside capture.log_window",
           "threshold_seconds": 3600 },
         "collector_perturbed": false } }
   ],
 
   "activity_events": [
-    { "at": "2026-09-24T00:27:03+07:00", "type": "ACTIVITY_RESUMED",
-      "package_name": "com.android.car.cluster.osdouble",
-      "class_name": "com.android.car.cluster.osdouble.ClusterOsDoubleActivity",
-      "range_header_form": "timeRange_locale",
-      "range_raw": null, "user_id": null,
-      "note": "288 ACTIVITY_RESUMED/STOPPED pairs for this one class in the first 7 s of the window — the usagestats-side view of the same crash loop, on a clock with second granularity",
-      "provenance": { "section_title": "DUMP OF SERVICE usagestats:", "section_ordinal": 0,
-        "line_start": 611081, "captured_at": "2026-09-24T00:27:03+07:00",
+    { "at": "<captured_at>", "type": "ACTIVITY_RESUMED",
+      "package_name": "<package_name>",
+      "class_name": "<package_name>.<ActivityClass>",
+      "user_id": <n>,
+      "range_window_seconds": null,
+      "provenance": { "section_title": "<section_title>", "section_ordinal": 0,
+        "line_start": <line>, "captured_at": "<captured_at>",
         "captured_at_time_base": "dumpsys_section_snapshot",
-        "age_seconds_at_capture": 14.0, "capture_kind": "point_in_time_snapshot",
+        "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot",
         "freshness": "now",
         "freshness_basis": { "input": "usagestats event timestamp",
           "basis": "second granularity; inside capture.log_window", "threshold_seconds": 3600 },
@@ -2254,34 +2379,50 @@ of [§2.3](#23-counts-are-match-blocks) exists to eliminate.
   "attribution": {
     "kill_sources": {
       "am_kill_events": 0,
-      "ams_crash_loop_kills": 273,
-      "app_errors_am_process_crashed_too_much": 38,
-      "note": "three disjoint buckets; am_kill=0 proves there was NO memory-pressure kill in the window, so the churn is AMS-initiated only"
+      "ams_crash_loop_kill_lines": <n>,
+      "app_errors_am_process_crashed_too_much": <n>
     },
-    "kill_source_completeness": {
-      "am_kill_channel": "complete_for_the_window",
-      "am_proc_died_channel": "PARTIAL — covers only 00:26:59.872-00:27:20.176 (20.304 s of the 64.662 s window)",
-      "ams_logcat_lines": "complete_for_the_window — 'Start proc' 277, 'killed too many times' 273"
+    "kill_source_coverage": {
+      "am_kill_event_log": { "channel": "am_proc_event_log",
+        "window_start": "MM-DD HH:MM:SS.mmm", "window_end": "MM-DD HH:MM:SS.mmm",
+        "duration_seconds": <event_log_seconds>, "covers_log_window": false,
+        "coverage_ratio": <coverage_ratio> },
+      "ams_logcat": { "channel": "logcat_main",
+        "window_start": "MM-DD HH:MM:SS.mmm", "window_end": "MM-DD HH:MM:SS.mmm",
+        "duration_seconds": <log_window_seconds>, "covers_log_window": true,
+        "coverage_ratio": 1.0 }
     },
     "pid_reuse": {
-      "worst_process": "com.android.car.cluster.osdouble",
-      "pid_first": 1116, "pid_last": 10021, "pid_delta": 8905,
-      "window_first": "09-24 00:27:01.587", "window_last": "09-24 00:27:52.061",
-      "window_seconds": 50.474,
-      "estimated_full_pid_cycles": 2.97,
-      "start_proc_events": 277,
-      "conclusion": "pid is an observation attribute; process_key (boot_epoch, start_seq) is the identity"
+      "worst_process": "<process_name>",
+      "pid_first": <n>, "pid_last": <n>, "distinct_pid_count": <n>, "pid_max": <n>,
+      "window_first": "MM-DD HH:MM:SS.mmm", "window_last": "MM-DD HH:MM:SS.mmm",
+      "window_seconds": <seconds>,
+      "start_proc_events": <n>
     },
     "unresolved": [
-      { "reason": "event_predates_or_outlives_snapshot", "count": null,
-        "note": "am_proc_start events for processes that died before 00:27:42" },
-      { "reason": "isolated_process_uid_not_directly_attributable", "count": 1, "example": "u10a212i0" }
+      { "reason": "outside_snapshot_range", "count": <n> },
+      { "reason": "isolated_uid", "count": <n>, "example": "<uid_formatted>" }
     ]
   },
 
   "evidence_gaps": [
-    { "field": "inventory.shared_uids[].*", "reason": "the SharedUser header printer was not isolated in Settings.java; ids are read from the archive" },
-    { "field": "lifecycle_events[].prefix uid coercion", "reason": "logcat uid column may be a symbolic name; uid_column_raw preserves it verbatim and no coercion is attempted at parse time" }
+    { "field": "inventory.shared_uids[].*", "reason": "UNVERIFIABLE",
+      "detail": "the SharedUser header prints a name and an identity hash but no id; the id is read from the archive where present and left absent where not." },
+    { "field": "lifecycle_events[].uid_column_raw", "reason": "PARSE_INDETERMINATE",
+      "detail": "the logcat uid column renders as a getpwuid name when short, a decimal uid otherwise, and blanks below zero. uid_column_raw preserves it verbatim and no coercion is attempted at parse time; consumers must resolve it." },
+    { "field": "attribution.kill_sources.am_kill_events", "reason": "REGION_EXCLUDED",
+      "detail": "zero am_kill events in the event-log interval. This is a bounded negative over the covered window only, not an assertion that no memory-pressure kill occurred in the rest of the log window." },
+    { "field": "activity_events[].range_window_seconds", "reason": "PARSE_INDETERMINATE",
+      "detail": "the range header carries no year and no timezone offset; the interval is only reconstructible from the pid stamps inside the block, which is a reconstruction rather than a read, so the field is null." },
+    { "field": "activity_events[]", "reason": "UNVERIFIABLE",
+      "detail": "whether these events cover a second user profile is settled here: the archive does contain a second-user block in the same section, so the earlier open question is closed." }
+  ],
+
+  "findings": [],
+
+  "notes": [
+    "EMPTY_FINDINGS_BY_DESIGN: apps.json is inventory and attribution, not diagnosis. Process churn, crash loops and memory pressure are findings belonging to cpu.json, crashes.json and memory.json respectively; duplicating them here would let two artifacts carry two answers to one question. This note satisfies §2.1's rule that an empty findings array must say why.",
+    "UNATTRIBUTED_EVENTS_ARE_DECLARED: lifecycle events that cannot be joined to a process instance are counted in attribution.unresolved[] with a reason from a closed enum, never dropped and never guessed."
   ]
 }
 ```
@@ -2364,7 +2505,7 @@ were considered:
   (`StackTracesDumpHelper.java:516`, `tombstoned.cpp:137-141`). Files are evidence carriers,
   reused and overwritten; one incident yields exactly one file. Keying by file makes the
   incident count a function of a retention constant.
-- **By process** — wrong for the common case. The 2026-05-20 trace holds **31 processes** but
+- **By process** — wrong for the common case. The archived trace holds **31 processes** but
   the ANR had **one** subject; the other 30 are bystanders dumped for context
   (`ProcessErrorStateRecord.java:403-435` adds parent, `MY_PID`, persistent, and IME
   processes). Keying by process would manufacture 31 ANRs from one.
@@ -2395,13 +2536,14 @@ incident itself.
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `channel` | enum | yes | `C1`…`C6`, as in the channel table above. |
-| `emitted_by` | string | yes | The AOSP emitter, `path:line`. |
+| `channel` | enum | yes | A descriptive channel name, **not** a `C1`…`C6` label. Those identifiers were an artefact of the original research pass and mean nothing to a consumer who has not read it. Use `logcat_anr_tag`, `anr_file_listing`, `vm_traces_at_last_anr`, `dumpsys_activity_last_anr`, `dumpsys_windowmanager_last_anr`, `dropbox_anr`, `event_log_am_anr`. |
+| `emitted_by` | **Removed.** | — | An AOSP `path:line` string is not a per-archive observation: no archive names the component that emitted a line. The spec cites the emitter in prose where the channel is introduced; the artifact does not repeat it. |
+| `emitter_kind` | enum | yes | **Replaces `emitted_by`, and is machine-decidable from the bytes alone:** `logcat_tag`, `event_log_tag`, `dumpsys_section`, `zip_entry_listing`, `zip_inlined_section`. The first is a substring search, the second a bracketed event-log line, the third a `DUMP OF SERVICE` section, the last two ZIP-entry-sourced. |
 | `present` | boolean | yes | The section existed and was non-empty. |
-| `counts_ref` | string | yes | The key in `counts` holding this channel's match block. |
-| `completeness` | enum | yes | `complete`, `lossy`, or `unknown`. `lossy` for C5 (rate-limited) and C6 (ring-wrapped). |
-| `rate_limit_per_tag` / `rate_limit_source` | integer \| null / string | yes when applicable | `6`, `DropboxRateLimiter.java:39` `RATE_LIMIT_ALLOWED_ENTRIES_DEFAULT = 6`. |
-| `decode_warning` | string \| null | yes | Set when a channel's field order contradicts its declaration. |
+| `counts_ref` | string \| null | yes | The key in `counts` holding this channel's match block. `null` when the channel carries no match block — and where the reference names a key that does not exist, that is a defect, not a value. |
+| `completeness` | **Removed.** | — | `complete` / `lossy` / `unknown` is a judgment about a collector the tool cannot inspect: nothing in a read-only archive records whether a pass dropped rows. **`window_start`, `window_end`, and `coverage_ratio` — already present in the `counts[].*_hits.coverage` block — are the machine-readable form of the same question.** |
+| `rate_limit_per_tag` / `rate_limit_source` | **Removed.** | — | A hardcoded platform constant. Worse, the reference example attached `rate_limit_per_tag: 6` to a channel marked `present: false` — a constant about a channel that does not exist. The *observed* effect is already visible in the match block's `raw_count`. |
+| `decode_warning` | **Removed.** | — | Replaced by an `evidence_gaps[]` entry. A decode warning is either "the bytes do not determine this", which is a gap, or it is prose about an AOSP writer the tool never read. It is never a data field. |
 | `provenance` | object | yes | See [§2.4](#24-provenance). |
 
 ##### `anr_incidents[]`
@@ -2411,7 +2553,8 @@ incident itself.
 | `incident_id` | string | yes | Stable id over `(channel, wall_clock, pid, process)`. | derived |
 | `process` | string | yes | Offending process name. | `ProcessErrorStateRecord.java:446` |
 | `pid` | integer | yes | Offending pid. | `ProcessErrorStateRecord.java:449`; `am_anr` field 2, `logtags:17` |
-| `user_id` | integer \| null | yes | | `logtags:17` field 1; `ProcessErrorStateRecord.java:374` |
+| `user_id` | integer \| null | yes | Read from the event-log payload when the slot layout is decodable, `null` otherwise. The slot order is declared in the platform's tag file, which is **not in the archive**, so a tool must record an `evidence_gaps[]` entry rather than guess — see `am_anr` below. | `logtags:17` field 1; `ProcessErrorStateRecord.java:374` |
+| `user_id_basis` | enum \| null | yes | `decoded_from_payload` or `null`. **Always published.** Distinguishes a user id that was read from one that is unavailable, so a consumer never has to guess why the field is `null`. | — |
 | `occurred_at` | string | yes | **The only field that can carry a current freshness.** | C1 line time, `logprint.cpp:1552` |
 | `activity_component` | string \| null | yes | The `(Activity)` suffix. | `ProcessErrorStateRecord.java:447-449` |
 | `reason` | string \| null | yes | Verbatim `Reason:` payload. | `ProcessErrorStateRecord.java:451-453`; origin `InputManagerCallback.java:350-351` |
@@ -2421,8 +2564,15 @@ incident itself.
 | `app_flags_hex` | string \| null | yes | `ApplicationInfo.flags`. | `ProcessErrorStateRecord.java:374` arg 4 |
 | `processes[]` | array of object | yes | Subject plus bystanders from the trace. | `ProcessErrorStateRecord.java:403-435` |
 | `trace_files[]` | array of string | yes | `anr_` files attributable to this incident. | `dumpstate.cpp:395-436` |
-| `evidence_channels[]` | array of string | yes | Which channels carry this incident. | — |
+| `evidence_channels[]` | array of object | yes | Which channels carry this incident. **Each entry is `{channel, join_basis}`** where `join_basis` ∈ `same_logcat_line`, `same_pid_and_window`, or `heuristic`. A bare string array claimed the channels agreed on the same incident; the reference artifact joined a logcat line, an event-log entry, and a dropbox record on `(pid, ~10 ms)` with **no recorded linkage key** anywhere in the archive. `heuristic` is honest about that and forces `confidence: "inferred"`. |
 | `provenance` | object | yes | | — |
+
+> **`am_anr` slot decoding is not implementable from the archive alone.** The event-log payload
+> is positional, and its field order is declared in the platform's `logtags` file — which a
+> read-only analyzer never sees. The reference archive contains `am_anr` entries but the spec
+> itself records that the corresponding emitter was never located. Rather than assert a slot
+> order, a tool that cannot confirm it emits `user_id: null`, `user_id_basis: null`, and an
+> `evidence_gaps[]` entry with `reason: UNVERIFIABLE`.
 
 `processes[]` entries:
 
@@ -2430,7 +2580,8 @@ incident itself.
 | --- | --- | --- | --- | --- |
 | `pid` | integer | yes | | `backtrace.cpp:49` |
 | `cmdline` | string \| null | yes | | `backtrace.cpp:52`; `libdebuggerd_client.cpp:109` |
-| `is_subject` | boolean | yes | `true` only for `firstPids[0]`. **Flagged as inferred** when derived from the `----- dumping pid:` marker rather than a `Subject:` header. | `ProcessErrorStateRecord.java:396` |
+| `is_subject` | **Removed**, replaced by `subject_inference`. | — | The predicate is machine-checkable — `----- dumping pid:` precedes the block — but the *name* asserted blame. The reference trace carries **no** `Subject:` header at all, and the artifact still published `is_subject: true` beside `confidence: "confirmed"`. What is knowable is which process the dumper led with. |
+| `subject_inference` | object | yes | `{basis, subject_pid, subject_inferred}` where `basis` ∈ `subject_header` (a `Subject:` line was read — the only case where a subject is a *fact`) or `dumping_pid_marker` (the dumper's first `----- dumping pid:`, which identifies a process but **not** a culprit). `subject_inferred: true` whenever `basis != "subject_header"`, and any finding resting on it must carry `confidence: "inferred"`, never `confirmed`. |
 | `stamped_at` | string | yes | Per-process nanosecond wall clock. | `backtrace.cpp:49` |
 | `java_thread_count` | integer \| null | yes | Parsed from `DALVIK THREADS (n):`. | ART thread dump |
 | `native_frame_count` | integer \| null | yes | `    #NN pc` lines. | `system/unwinding/libunwindstack` |
@@ -2450,13 +2601,13 @@ sourced does not go in the spec.**
 
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
-| `count` | integer | yes | 65. | `dumpstate.cpp:203` `ANR_DIR` |
-| `listing_total_kb_as_printed` | integer | yes | 20336, as printed by `ls -lt`. | `dumpstate.cpp:1204` |
-| `total_bytes_approx` | integer \| null | yes | **Approximate.** Carries `total_bytes_derivation`. | — |
-| `oldest_created_at` / `newest_created_at` | string \| null | yes | | `StackTracesDumpHelper.java:69-70` |
-| `span_seconds` | number \| null | yes | 15530.631. | derived |
-| `all_outside_log_window` | boolean | yes | `true`. | derived |
-| `files[]` | array of object | yes | One per file. Below. | — |
+| `count` | integer | yes | `anr_` file count in the listing. | `dumpstate.cpp:203` `ANR_DIR` |
+| `listing_total_kb_as_printed` | integer | yes | The `total` line `ls -lt` prints. **An allocated-block figure, not a byte total.** | `dumpstate.cpp:1204` |
+| `total_bytes` | integer | yes | The sum of the printed per-file size column. **Exact**, and therefore needs no `_derivation` sibling per [§2.9](#29-null-absent-and-raw) rule 4. The previous `total_bytes_approx` derived from the `ls` total was both less exact than the archive allowed and ~507 KB larger than the true byte total. |
+| `oldest_created_at` / `newest_created_at` | string \| null | yes | Min/max `created_at` over `files[]`. | `StackTracesDumpHelper.java:69-70` |
+| `span_seconds` | number \| null | yes | `newest − oldest`. `null` when fewer than two files. | derived |
+| `all_outside_log_window` | boolean | yes | `true` when no file's `created_at` falls inside `capture.log_window`. | derived |
+| `files[]` | array of object | yes | One per file. Below. **All files are emitted**; where an artifact is abbreviated for presentation it carries `files_truncated_in_example`, as `cpu.json`'s contention array does. | — |
 
 `files[]` entries:
 
@@ -2468,7 +2619,7 @@ sourced does not go in the spec.**
 | `mtime_local` | string | yes | `ls` mtime, **minute granularity**. | `dumpstate.cpp:1204` |
 | `created_at` | string | yes | **Millisecond** creation time decoded from the `anr_` name. | `StackTracesDumpHelper.java:69-70`, `:455` |
 | `is_newest` | boolean | yes | `anr_data_[0]` — the one dumped into the main text. | `dumpstate.cpp:432-434`, `:1184` |
-| `time_conflict` | boolean | yes | `true` if `mtime_local` and `created_at` disagree by > 60 s (clock changed). | derived |
+| `mtime_ls_minute_differs_from_filename` | boolean | yes | **`true` when the minute-granular `ls` mtime and the second-precision filename disagree.** This replaces `time_conflict`, which was named as a clock-change detector but could not be one: both values are written by the same device clock, so a clock change shifts both together and the flag would essentially never fire. Under the new name the field makes no causal claim — it reports the disagreement and leaves the cause open. | derived |
 | `provenance` | object | yes | | — |
 
 ##### `last_anr_trace`
@@ -2479,8 +2630,9 @@ sourced does not go in the spec.**
 | `source_path` | string | yes | Path parsed out of the header. | same |
 | `file_mtime_local` | string | yes | From the header. | `DumpstateInternal.cpp:146-150` |
 | `trace_first_stamp` / `trace_last_stamp` | string | yes | Min/max `----- pid N at`. | `backtrace.cpp:49` |
-| `process_count` | integer | yes | 31. | — |
-| `is_culprit_trace` | boolean | yes | `true` when block 1 is preceded by `----- dumping pid:`. | `StackTracesDumpHelper.java:599-602` |
+| `process_count` | integer | yes | `----- pid N at` block count. |
+| `is_culprit_trace` | **Removed**, replaced by `has_dumping_pid_marker`. | — | Same defect as `is_subject`: the predicate passes, the *name* asserts blame. "Culprit" is a conclusion about which component was responsible for a hang, and a trace that opens with `----- dumping pid:` says only that the dumper started there. |
+| `has_dumping_pid_marker` | boolean | yes | `true` when the first process block is preceded by `----- dumping pid:`. **A statement about the file's layout, not about blame.** Any finding that uses it to attribute an ANR must carry `confidence: "inferred"`. | `StackTracesDumpHelper.java:599-602` |
 | `uptime_ms_at_dump` | integer \| null | yes | **Uptime, not wall clock** — and therefore a `cross_boot_reference`. | `StackTracesDumpHelper.java:599-602` |
 | `processes[]` | array of object | yes | As above, with `stamped_at` required. | `backtrace.cpp:47-95` |
 | `lock_contention_markers` | object | yes | `{waiting_to_lock, held_by_thread}`. | — |
@@ -2490,46 +2642,50 @@ sourced does not go in the spec.**
 
 This artifact is the reason the whole convention exists. On the reference archive:
 
-| Clock | Value | Where |
-| --- | --- | --- |
-| File creation (the ANR event) | `2026-05-20 05:13:42.314` | filename, `StackTracesDumpHelper.java:72` |
-| File mtime | `2026-05-20 05:13:43` | section header, `DumpstateInternal.cpp:146-150` |
-| First process stamp | `2026-05-20 05:13:42.327535982+0700` | `backtrace.cpp:49` |
-| Last process stamp | `2026-05-20 05:13:43.782615107+0700` | `backtrace.cpp:49` |
-| Archive captured | `2026-09-24 00:27:17` | `== dumpstate:` banner |
-| **Age at capture** | **126 d 19 h 13 m 34 s** | derived |
-| Cross-boot reference | `31190738` ms = **8 h 39 m 50.738 s of uptime on a previous boot** | `StackTracesDumpHelper.java:599-602` |
+| Clock | Where it is read |
+| --- | --- |
+| File creation (the ANR event) | the millisecond timestamp encoded in the `anr_` filename |
+| File mtime | the file-section header stamp |
+| First process stamp | the first `----- pid N at` header inside the trace |
+| Last process stamp | the last `----- pid N at` header inside the trace |
+| Archive captured | the `== dumpstate:` banner (`system.json#/capture/captured_at`) |
+| **Age at capture** | derived from the above |
+| Cross-boot reference | the `uptime_ms_at_dump` value in the trace's first marker |
+
+**Three clocks that disagree with each other are the finding, not a defect to be reconciled.**
+The filename, the section-header mtime and the in-trace process stamps are all written by the
+same device clock but at different instants and precisions. The artifact publishes all three
+rather than picking a favourite, and `mtime_ls_minute_differs_from_filename` reports any
+disagreement without asserting which one is right.
 
 Meanwhile **this boot had zero ANRs**, provable three independent ways:
 
-1. `ANR in ` → **0** occurrences in the whole 64 MB archive.
-2. `am_anr` → **0** event-log entries.
-3. Two dumpsys sections assert it in so many words — archive line **7765**
-   (`WINDOW MANAGER LAST ANR (dumpsys window lastanr)`) and line **385577**
-   (`ACTIVITY MANAGER LAST ANR (dumpsys activity lastanr)`) both print
-   `  <no ANR has occurred since boot>`.
+1. The `ANR in ` logcat tag has **0** occurrences archive-wide.
+2. The `am_anr` event-log tag has **0** entries.
+3. Two dumpsys sections assert it in so many words — the window-manager last-ANR and the
+   activity last-ANR sections both print `  <no ANR has occurred since boot>`.
 
 …while the `ANR FILES` listing at archive line **318023** shows 65 files:
 
 ```
 ------ ANR FILES (ls -lt /data/anr/) ------
-total 20336
--rw------- 1 system system 714307 2026-05-20 05:13 anr_2026-05-20-05-13-42-314
--rw------- 1 system system 438455 2026-05-20 05:13 anr_2026-05-20-05-13-41-273
+total <listing_total_kb>
+-rw------- 1 system system <size_bytes> <YYYY-MM-DD> <HH:MM> anr_<YYYY-MM-DD-HH-mm-ss-SSS>
 ...
--rw------- 1 system system   4910 2026-05-20 00:54 anr_2026-05-20-00-54-11-683
------- 0.006s was the duration of 'ANR FILES' ------
+------ <duration>s was the duration of 'ANR FILES' ------
 ```
 
-**65 files, `total 20336` KB ≈ 20.3 MB, spanning 4 h 19 m 30.631 s — all 126 days stale, all
-predating this boot entirely.** The correct artifact states both facts and lets
-`negative_evidence` carry the authoritative one.
+**The listing is the whole story, and it is a stale-retained-files story.** The files span a
+window of hours, they all predate this boot entirely, and none of them is an incident in this
+capture. **The correct artifact states both facts — the files and the absence of incidents — and
+lets `negative_evidence` carry the authoritative one.**
 
-Why the files were not pruned: `maybePruneOldTraces` (`StackTracesDumpHelper.java:512-530`)
-keeps `min(64, 1 day)` files but **only runs immediately after a new ANR file is written**
-(`:183`). 65 files persist indefinitely because the archive has more than `max+1` survivors and
-no new ANR ever arrives to trigger a prune. **The retention rule is event-driven, not
-clock-driven.**
+Why the files were not pruned: `maybePruneOldTraces`
+(`StackTracesDumpHelper.java:512-530`) keeps `min(64, 1 day)` files but **only runs immediately
+after a new ANR file is written** (`:183`). The count therefore persists indefinitely whenever
+survivors exceed `max + 1` and no new ANR arrives to trigger a prune. **The retention rule is
+event-driven, not clock-driven** — which is why `trace_files.count` is published as an
+observation and its explanation lives here rather than in the artifact.
 
 #### Worked example
 
@@ -2553,214 +2709,224 @@ clock-driven.**
     "am_anr_hits": {
       "pattern": "am_anr", "pattern_kind": "word_boundary", "case_sensitive": true,
       "raw_count": 0, "matched_evidence": 0, "suppressed_noise": 0,
-      "not_emitted_by_platform": 1, "suppressed_noise_note": null,
-      "coverage": { "window_start": "2026-09-24T00:26:59.872+07:00",
-                    "window_end": "2026-09-24T00:27:20.176+07:00",
-                    "archive_window": "capture.log_window", "coverage_ratio": 0.314 },
+      "not_emitted_by_platform": 0, "suppressed_noise_note": null,
+      "coverage": { "window_start": "MM-DD HH:MM:SS.mmm",
+                    "window_end": "MM-DD HH:MM:SS.mmm",
+                    "archive_window": "capture.log_window", "coverage_ratio": <coverage_ratio> },
       "regions": []
     },
     "anr_file_listing_hits": {
-      "pattern": "^anr_[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}$",
+      "pattern": "^-rw[^ ]+ +[0-9]+ +[^ ]+ +[^ ]+ +[0-9]+ +(\\S{3} +[0-9]+ +[0-9:]+)\\s+(anr_[0-9]{4}-.*)$",
       "pattern_kind": "line_regex", "case_sensitive": true,
-      "raw_count": 66, "matched_evidence": 65, "suppressed_noise": 1,
-      "not_emitted_by_platform": 0,
-      "suppressed_noise_note": "the 'total 20336' summary line of 'ls -lt' is not a file",
+      "raw_count": <listing_file_count>, "matched_evidence": <listing_file_count>, "suppressed_noise": 0,
+      "not_emitted_by_platform": 0, "suppressed_noise_note": null,
       "coverage": { "window_start": null, "window_end": null,
                     "archive_window": "capture.log_window", "coverage_ratio": null },
       "regions": [ { "archive_path": "<main_entry>", "section_title": "ANR FILES",
-                     "section_ordinal": 0, "line_start": 318025, "line_end": 318089, "line_count": 65 } ]
+                     "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+                     "line_count": <listing_file_count> } ]
     }
   },
 
   "channels": [
-    { "channel": "C1", "emitted_by": "ProcessErrorStateRecord.java:563", "present": false,
-      "counts_ref": "anr_tag_hits", "completeness": "complete" },
-    { "channel": "C2", "emitted_by": "dumpstate.cpp:1204", "present": true,
-      "counts_ref": "anr_file_listing_hits", "completeness": "complete" },
-    { "channel": "C3", "emitted_by": "dumpstate.cpp:1184", "present": true,
-      "counts_ref": "last_anr_trace_present", "completeness": "complete" },
-    { "channel": "C4", "emitted_by": "ActivityTaskManagerService.java:4254", "present": true,
-      "counts_ref": "lastanr_dump_hits", "completeness": "complete" },
-    { "channel": "C5", "emitted_by": "ActivityManagerService.java:9766", "present": false,
-      "counts_ref": "dropbox_anr_hits", "completeness": "lossy",
-      "rate_limit_per_tag": 6,
-      "rate_limit_source": "DropboxRateLimiter.java:39 RATE_LIMIT_ALLOWED_ENTRIES_DEFAULT=6",
-      "decode_warning": "dumpstate requests only -p system_server_crash and -p system_app_crash (dumpstate.cpp:1858-1859); ANR tags reach the archive only as ZIP entries under FS/data/system/dropbox, and only on non-user builds (dumpstate.cpp:1957-1960)" },
-    { "channel": "C6", "emitted_by": "ProcessErrorStateRecord.java:374", "present": true,
-      "counts_ref": "am_anr_hits", "completeness": "lossy",
-      "decode_warning": "event-log ring wrapped; buffer covers only 20.304 s of the 64.662 s window" }
+    { "channel": "logcat_anr_tag", "emitter_kind": "logcat_tag", "present": false,
+      "counts_ref": "anr_tag_hits" },
+    { "channel": "anr_file_listing", "emitter_kind": "zip_entry_listing", "present": true,
+      "counts_ref": "anr_file_listing_hits" },
+    { "channel": "vm_traces_at_last_anr", "emitter_kind": "zip_inlined_section", "present": true,
+      "counts_ref": null },
+    { "channel": "dumpsys_activity_last_anr", "emitter_kind": "dumpsys_section", "present": true,
+      "counts_ref": null },
+    { "channel": "dropbox_anr", "emitter_kind": "zip_entry_listing", "present": false,
+      "counts_ref": "dropbox_anr_hits" },
+    { "channel": "event_log_am_anr", "emitter_kind": "event_log_tag", "present": true,
+      "counts_ref": "am_anr_hits" }
   ],
 
   "anr_incidents": [],
 
   "trace_files": {
-    "count": 65,
-    "listing_total_kb_as_printed": 20336,
-    "total_bytes_approx": 20824064,
-    "total_bytes_derivation": "listing_total_kb_as_printed * 1024; ls -lt prints KB in 1K blocks and the exact byte total is not printed",
-    "oldest_created_at": "2026-05-20T00:54:11.683+07:00",
-    "newest_created_at": "2026-05-20T05:13:42.314+07:00",
-    "span_seconds": 15530.631,
+    "count": <listing_file_count>,
+    "listing_total_kb_as_printed": <listing_total_kb>,
+    "total_bytes": <sum_of_printed_sizes>,
+    "total_bytes_note": "the sum of the printed per-file size column. This is exact, so per §2.9 rule 4 it needs no derivation string. The ls 'total' line is an allocated-block figure and is published separately as listing_total_kb_as_printed rather than summed.",
+    "oldest_created_at": "<YYYY-MM-DD>T<HH:MM:SS.mmm><TZ>",
+    "newest_created_at": "<YYYY-MM-DD>T<HH:MM:SS.mmm><TZ>",
+    "span_seconds": <span_seconds>,
     "all_outside_log_window": true,
     "files": [
-      { "path": "FS/data/anr/anr_2026-05-20-05-13-42-314",
-        "file_name": "anr_2026-05-20-05-13-42-314",
-        "size_bytes": 714307, "mtime_local": "2026-05-20T05:13:00",
-        "created_at": "2026-05-20T05:13:42.314+07:00",
-        "is_newest": true, "time_conflict": false,
-        "provenance": { "evidence_origin": "C2_anr_file_listing", "archive_path": "<main_entry>",
+      { "path": "FS/data/anr/anr_<YYYY-MM-DD-HH-mm-ss-SSS>",
+        "file_name": "anr_<YYYY-MM-DD-HH-mm-ss-SSS>",
+        "size_bytes": <n>, "mtime_local": "<YYYY-MM-DD>T<HH:MM:00>",
+        "created_at": "<YYYY-MM-DD>T<HH:MM:SS.mmm><TZ>",
+        "is_newest": true, "mtime_ls_minute_differs_from_filename": false,
+        "provenance": { "evidence_origin": "anr_file_listing", "archive_path": "<main_entry>",
           "section_title": "ANR FILES", "section_ordinal": 0,
-          "line_start": 318025, "line_end": 318025,
-          "captured_at": "2026-05-20T05:13:42.314+07:00", "captured_at_time_base": "file_name",
+          "line_start": <line>, "line_end": <line>,
+          "captured_at": "<YYYY-MM-DD>T<HH:MM:SS.mmm><TZ>", "captured_at_time_base": "file_name",
           "evidence_time_source": "filename_timestamp",
-          "age_seconds_at_capture": 10996814, "capture_kind": "disk_artifact",
+          "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact",
           "freshness": "stale",
           "freshness_basis": { "input": "filename timestamp",
-            "basis": "ANR file name encodes creation time (StackTracesDumpHelper.java:455); 126.80 days before capture",
+            "basis": "the ANR file name encodes creation time; the age at capture follows from it",
             "threshold_seconds": 3600 },
           "collector_perturbed": false,
-          "collector_perturbed_basis": "0.006 s ls -lt pass" } },
-      { "path": "FS/data/anr/anr_2026-05-20-00-54-11-683",
-        "file_name": "anr_2026-05-20-00-54-11-683",
-        "size_bytes": 4910, "mtime_local": "2026-05-20T00:54:00",
-        "created_at": "2026-05-20T00:54:11.683+07:00",
-        "is_newest": false, "time_conflict": false,
+          "collector_perturbed_basis": "read_from_disk" } },
+      { "path": "FS/data/anr/anr_<YYYY-MM-DD-HH-mm-ss-SSS>",
+        "file_name": "anr_<YYYY-MM-DD-HH-mm-ss-SSS>",
+        "size_bytes": <n>, "mtime_local": "<YYYY-MM-DD>T<HH:MM:00>",
+        "created_at": "<YYYY-MM-DD>T<HH:MM:SS.mmm><TZ>",
+        "is_newest": false, "mtime_ls_minute_differs_from_filename": false,
         "provenance": { "section_title": "ANR FILES", "section_ordinal": 0,
-          "line_start": 318089, "line_end": 318089,
-          "captured_at": "2026-05-20T00:54:11.683+07:00", "captured_at_time_base": "file_name",
-          "age_seconds_at_capture": 10999982, "capture_kind": "disk_artifact",
+          "line_start": <line>, "line_end": <line>,
+          "captured_at": "<YYYY-MM-DD>T<HH:MM:SS.mmm><TZ>", "captured_at_time_base": "file_name",
+          "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact",
           "freshness": "stale",
           "freshness_basis": { "input": "filename timestamp",
-            "basis": "oldest of 65 retained files; 4h19m30.631s before the newest",
+            "basis": "oldest of the retained files, measured against the newest by the filename timestamps",
             "threshold_seconds": 3600 },
           "collector_perturbed": false } }
     ]
   },
 
   "last_anr_trace": {
-    "section_header": "------ VM TRACES AT LAST ANR (/data/anr/anr_2026-05-20-05-13-42-314: 2026-05-20 05:13:43) ------",
-    "source_path": "/data/anr/anr_2026-05-20-05-13-42-314",
-    "file_mtime_local": "2026-05-20T05:13:43",
-    "trace_first_stamp": "2026-05-20T05:13:42.327535982+07:00",
-    "trace_last_stamp": "2026-05-20T05:13:43.782615107+07:00",
-    "process_count": 31,
-    "is_culprit_trace": true,
-    "uptime_ms_at_dump": 31190738,
+    "section_header": "------ VM TRACES AT LAST ANR (/data/anr/anr_<YYYY-MM-DD-HH-mm-ss-SSS>: <YYYY-MM-DD> HH:MM:SS) ------",
+    "source_path": "/data/anr/anr_<YYYY-MM-DD-HH-mm-ss-SSS>",
+    "file_mtime_local": "<YYYY-MM-DD>T<HH:MM:SS>",
+    "trace_first_stamp": "<YYYY-MM-DD>T<HH:MM:SS.nnnnnnnnn><TZ>",
+    "trace_last_stamp": "<YYYY-MM-DD>T<HH:MM:SS.nnnnnnnnn><TZ>",
+    "process_count": <n>,
+    "has_dumping_pid_marker": true,
+    "uptime_ms_at_dump": <uptime_ms>,
     "processes": [
-      { "pid": 17511, "cmdline": "system_server", "is_subject": true,
-        "stamped_at": "2026-05-20T05:13:42.327535982+07:00",
-        "java_thread_count": 219, "native_frame_count": null, "waiter_count": 2 },
-      { "pid": 448, "cmdline": "/apex/com.google.android.widevine/bin/hw/android.hardware.drm-service.widevine",
-        "is_subject": false, "stamped_at": "2026-05-20T05:13:42.721675565+07:00",
-        "java_thread_count": null, "native_frame_count": 5, "waiter_count": 0 },
-      { "pid": 445, "cmdline": null, "is_subject": false,
-        "stamped_at": "2026-05-20T05:13:43.730310899+07:00",
+      { "pid": <pid>, "cmdline": "system_server",
+        "subject_inference": { "basis": "dumping_pid_marker", "subject_pid": <pid>, "subject_inferred": true },
+        "stamped_at": "<YYYY-MM-DD>T<HH:MM:SS.nnnnnnnnn><TZ>",
+        "java_thread_count": <n>, "native_frame_count": null, "waiter_count": <n> },
+      { "pid": <pid>, "cmdline": "/apex/<vendor.hardware.drm-service>",
+        "subject_inference": { "basis": "dumping_pid_marker", "subject_pid": <pid>, "subject_inferred": false },
+        "stamped_at": "<YYYY-MM-DD>T<HH:MM:SS.nnnnnnnnn><TZ>",
+        "java_thread_count": null, "native_frame_count": <n>, "waiter_count": 0 },
+      { "pid": <pid>, "cmdline": "/apex/com.android.hardware.<name>/bin/hw/android.hardware.<name>-service",
+        "subject_inference": { "basis": "dumping_pid_marker", "subject_pid": <pid>, "subject_inferred": false },
+        "stamped_at": "<YYYY-MM-DD>T<HH:MM:SS.nnnnnnnnn><TZ>",
         "java_thread_count": null, "native_frame_count": null, "waiter_count": null }
     ],
-    "lock_contention_markers": { "waiting_to_lock": 2, "held_by_thread": 1 },
-    "provenance": { "evidence_origin": "C3_last_anr_trace", "archive_path": "<main_entry>",
+    "lock_contention_markers": { "waiting_to_lock": <n>, "held_by_thread": <n> },
+    "provenance": { "evidence_origin": "vm_traces_at_last_anr", "archive_path": "<main_entry>",
       "section_title": "VM TRACES AT LAST ANR", "section_ordinal": 0,
-      "line_start": 309986, "line_end": 318022,
-      "captured_at": "2026-05-20T05:13:42.314+07:00", "captured_at_time_base": "file_section_header_mtime",
+      "line_start": <line>, "line_end": <line>,
+      "captured_at": "<YYYY-MM-DD>T<HH:MM:SS><TZ>", "captured_at_time_base": "file_section_header_mtime",
       "evidence_time_source": "embedded_trace_stamp",
-      "age_seconds_at_capture": 10996814, "capture_kind": "disk_artifact",
-      "cross_boot_reference": 31190738,
+      "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact",
+      "cross_boot_reference": <uptime_ms>,
       "freshness": "stale",
-      "freshness_basis": { "input": "section header mtime and all 31 '----- pid N at' stamps",
-        "basis": "they agree on 2026-05-20 05:13:4x, 126.80 days before capture; cross-boot reference 31190738 ms of uptime is 1.8e6 x capture uptime 17 s, so the trace is from a previous boot",
+      "freshness_basis": { "input": "section header mtime and the per-process '----- pid N at' stamps",
+        "basis": "all stamps agree with the header mtime; cross_boot_reference is orders of magnitude larger than the capture uptime, so the trace is from a previous boot",
         "threshold_seconds": 3600 },
       "collector_perturbed": false,
-      "collector_perturbed_basis": "the trace was dumped from disk; dumpstate did not generate it" }
+      "collector_perturbed_basis": "read_from_disk" }
   },
 
   "negative_evidence": [
-    { "scope": "C4 — ACTIVITY MANAGER LAST ANR",
+    { "scope": "dumpsys_activity_last_anr",
       "statement": "  <no ANR has occurred since boot>",
-      "source": { "archive_path": "<main_entry>", "section_title": "DUMP OF SERVICE activity:",
-                  "line_start": 385576, "line_end": 385577 },
+      "source": { "archive_path": "<main_entry>", "section_title": "<dumpsys activity section>",
+                  "line_start": <line>, "line_end": <line> },
       "authority": "platform_assertion" },
-    { "scope": "C4 — WINDOW MANAGER LAST ANR",
+    { "scope": "dumpsys_windowmanager_last_anr",
       "statement": "  <no ANR has occurred since boot>",
-      "source": { "archive_path": "<main_entry>", "section_title": "DUMPSYS CRITICAL",
-                  "line_start": 7764, "line_end": 7765 },
+      "source": { "archive_path": "<main_entry>", "section_title": "<critical dumpsys section>",
+                  "line_start": <line>, "line_end": <line> },
       "authority": "platform_assertion" },
-    { "scope": "C1 — logcat 'ANR in ' tag",
-      "statement": "0 occurrences of the literal 'ANR in ' across the whole archive",
+    { "scope": "logcat_anr_tag",
+      "statement": "0 occurrences of the literal 'ANR in ' in the main logcat sections",
       "source": { "archive_path": "<main_entry>", "section_title": "SYSTEM LOG",
-                  "section_ordinal": 0, "line_start": 9117, "line_end": 53708 },
+                  "section_ordinal": 0, "line_start": <line>, "line_end": <line> },
       "authority": "archive_absence" },
-    { "scope": "C6 — EVENT LOG am_anr",
-      "statement": "0 'am_anr' entries in the EVENT LOG section",
+    { "scope": "event_log_am_anr",
+      "statement": "0 'am_anr' entries in the event-log section",
       "source": { "archive_path": "<main_entry>", "section_title": "EVENT LOG",
-                  "section_ordinal": 0, "line_start": 53710, "line_end": 55656 },
+                  "section_ordinal": 0, "line_start": <line>, "line_end": <line> },
       "authority": "archive_absence" }
   ],
 
   "findings": [
-    { "id": "anr-0001", "kind": "anr_now_summary",
-      "title": "No ANR occurred during this boot; 65 ANR trace files from 2026-05-20 are present and are 126.80 days stale",
+    { "id": "anr-0001", "kind": "anr_absence_with_stale_files",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
-      "attributes": { "anr_incidents_count": 0, "anr_files_on_disk": 65,
-                      "anr_files_outside_log_window": 65 },
-      "metrics": { "newest_anr_file_age_seconds": 10996814, "oldest_anr_file_age_seconds": 10999982,
-                   "anr_file_span_seconds": 15530.631, "cross_boot_uptime_ms": 31190738 },
-      "evidence": { "archive_path": "<main_entry>", "kind": "section",
-                    "locator": { "line_start": 318023, "line_end": 318090 },
-                    "excerpt": "------ ANR FILES (ls -lt /data/anr/) ------\ntotal 20336\n-rw------- 1 system system 714307 2026-05-20 05:13 anr_2026-05-20-05-13-42-314",
-                    "excerpt_truncated": false, "excerpt_bytes": 175, "excerpt_complete": true },
+      "attributes": { "anr_incidents_count": <n>, "anr_files_on_disk": <n>,
+                      "anr_files_outside_log_window": <n> },
+      "metrics": { "newest_anr_file_age_seconds": <age>, "oldest_anr_file_age_seconds": <age>,
+                   "anr_file_span_seconds": <span_seconds>, "cross_boot_uptime_ms": <uptime_ms> },
+      "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
+                    "locator": { "line_start": <line>, "line_end": <line> },
+                    "excerpt": "------ ANR FILES (ls -lt /data/anr/) ------\ntotal <listing_total_kb>\n-rw------- 1 system system <size_bytes> <YYYY-MM-DD> <HH:MM> anr_<YYYY-MM-DD-HH-mm-ss-SSS>",
+                    "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [
-        { "archive_path": "FS/data/anr/anr_2026-05-20-05-13-42-314", "kind": "file_entry",
-          "locator": { "line_start": 1, "line_end": 1 },
-          "excerpt": "----- dumping pid: 17511 at 31190738\nproc 17511\n…",
-          "excerpt_truncated": true, "excerpt_bytes": 512, "excerpt_complete": false }
+        { "archive_path": "FS/data/anr/anr_<YYYY-MM-DD-HH-mm-ss-SSS>", "kind": "file_entry",
+          "locator": { "line_start": <line>, "line_end": <line> },
+          "excerpt": "----- dumping pid: <pid> at <uptime_ms>\nproc <pid>\n",
+          "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": false }
       ],
-      "provenance": { "evidence_origin": "C2_anr_file_listing", "archive_path": "<main_entry>",
+      "provenance": { "evidence_origin": "anr_file_listing", "archive_path": "<main_entry>",
         "section_title": "ANR FILES", "section_ordinal": 0,
-        "line_start": 318023, "line_end": 318090,
-        "captured_at": "2026-05-20T05:13:42.314+07:00", "captured_at_time_base": "file_name",
-        "age_seconds_at_capture": 10996814, "capture_kind": "disk_artifact",
+        "line_start": <line>, "line_end": <line>,
+        "captured_at": "<YYYY-MM-DD>T<HH:MM:SS.mmm><TZ>", "captured_at_time_base": "file_name",
+        "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact",
         "freshness": "stale",
         "freshness_basis": { "input": "filename timestamp + cross-boot reference",
-          "basis": "126.80 days old and from a boot that ended before this one; see last_anr_trace.provenance",
+          "basis": "the files predate capture and come from a boot that ended before this one; see last_anr_trace.provenance",
           "threshold_seconds": 3600 },
-        "cross_boot_reference": 31190738, "collector_perturbed": false,
-        "collector_perturbed_basis": "ls -lt pass over an existing directory" } }
+        "cross_boot_reference": <uptime_ms>, "collector_perturbed": false,
+        "collector_perturbed_basis": "read_from_disk" } }
+  ],
+
+  "evidence_gaps": [
+    { "field": "anr_incidents[]", "reason": "SECTION_ABSENT",
+      "detail": "no appNotResponding event in any channel. The array is empty, which per this specification is a result and not an absence — negative_evidence carries the two platform assertions and the two archive searches that support it." },
+    { "field": "anr_incidents[].subject", "reason": "UNVERIFIABLE",
+      "detail": "the am_anr event-log slot layout would have to be decoded from the platform's tag declaration to read a subject; no such declaration is present in the archive, so no subject is published for any incident." },
+    { "field": "dropbox_anr", "reason": "SECTION_ABSENT",
+      "detail": "the dropbox ZIP entry is present but holds no ANR-tagged entries. Whether the platform requested ANR tags for this build is not observable from the archive." },
+    { "field": "last_anr_trace.processes[].subject_inference", "reason": "UNVERIFIABLE",
+      "detail": "the trace carries no Subject: header, so subject_inference is derived from the dumper's first dumping-pid marker. That identifies where the dumper started, not which component was responsible for the hang." },
+    { "field": "trace_files.count", "reason": "UNVERIFIABLE",
+      "detail": "the retention rule that decides how many ANR files persist is platform behaviour; the tool reports the observed count and does not explain it." }
   ],
 
   "notes": [
-    "ANR_TAG_ABSENT_BUT_FILES_PRESENT: 'ANR in ' matched 0 times and that is NOT evidence of no ANR; 65 trace files exist on disk from a previous boot. Source ANRs from ANR FILES (dumpstate.cpp:1204) and FS/data/anr/ (dumpstate.cpp:1188), never from a logcat tag.",
-    "ANR_RETENTION_EVENT_DRIVEN: maybePruneOldTraces (StackTracesDumpHelper.java:512-530) runs only after a new ANR is written (:183), so 65 files can persist past the 64-file cap indefinitely.",
-    "ANRD_NOT_A_DETECTOR: the 'anrd' module is a CPU-starvation ftrace collector (system/extras/ANRdaemon/README:1-14); it is also not built for this product. It contributes no field to this artifact."
+    "ANR_TAG_ABSENT_BUT_FILES_PRESENT: a zero match for the logcat 'ANR in ' tag is not evidence that no ANR occurred; trace files exist on disk from a previous boot. An ANR is read from the ANR FILES listing and from the inlined VM TRACES section, never from a logcat tag count."
   ]
 }
 ```
 
 #### Open questions
 
-- **No ANR subject for the 2026-05-20 trace.** The newest trace's first block is
-  `system_server` (pid 17511) preceded by `----- dumping pid: 17511 at 31190738`, so the
-  culprit *appears* to have been `system_server`. But the trace has **no `Subject:` header**
-  (`StackTracesDumpHelper.java:168-176` writes one only when `subject`/`criticalEventSection`/
-  `extraHeaders` are non-null), and no `ANR in` line survives from that boot. **`is_subject`
-  is emitted from the `----- dumping pid:` marker only and is flagged as inferred.** No ANR
-  subject is attributed for the stale trace.
+- **No ANR subject for the archived trace.** The newest trace's first block is `system_server`,
+  preceded by a `----- dumping pid: … at <uptime_ms>` marker, so the trace *appears* to have
+  opened on `system_server`. But the trace carries **no `Subject:` header** — the platform
+  writes one only when a subject is available, and no subject is recorded for this dump — and
+  no `ANR in` line survives from that boot. **`subject_inference` therefore derives from the
+  dumping-pid marker only, and is flagged `subject_inferred: true`.** No ANR subject is
+  attributed for the stale trace, and no finding resting on it may claim `confidence: "confirmed"`.
 - **C5 dropbox ANR reachability.** `dumpstate` requests only `-p system_server_crash` and
   `-p system_app_crash` (`dumpstate.cpp:1858-1859`), so ANR dropbox entries reach the archive
   only as ZIP entries under `FS/data/system/dropbox`, and only on non-`user` builds
   (`dumpstate.cpp:1957-1960`). This archive is `userdebug`, so the directory *should* be
   present — but it contains no `*_anr` files, consistent with zero ANRs. The **`user`-build
   behaviour is not verified**, so C5's completeness is `lossy`, not `complete`.
-- **`trace_files.total_bytes_approx`.** `ls -lt` prints `total 20336` in 1K blocks; the exact
-  byte total is not in the archive. The approximation carries its derivation, per
-  [§2.9](#29-null-absent-and-raw) rule 4.
+- **`trace_files` has no approximate total.** `ls -lt` prints an allocated-block `total` in 1K
+  blocks, which is not a byte total and is larger than the sum of the per-file size column. The
+  artifact therefore publishes `total_bytes` as the exact sum of the printed sizes and keeps
+  `listing_total_kb_as_printed` only as the verbatim `ls` figure. No `_derivation` sibling is
+  needed: the formula is stated in the field table, per [§2.9](#29-null-absent-and-raw) rule 4.
 - **ANR file timestamps are well-dated.** An earlier claim that the trace carries "no
-  timestamp inside" is **refuted**: every process block carries a nanosecond wall clock —
-  `----- pid 17511 at 2026-05-20 05:13:42.327535982+0700 -----` (`backtrace.cpp:49`), 31 such
-  lines in the section. **Staleness here is provable, not inferred.**
+  timestamp inside" is **refuted**: every process block carries a nanosecond wall clock in its
+  `----- pid N at … -----` header. **Staleness here is provable, not inferred.**
 - **The `ANR FILES` `ls` column is minute-granular** while the filename is millisecond. The
-  `time_conflict` field exists to catch a device clock change; it is `false` on both files
-  checked.
+  `mtime_ls_minute_differs_from_filename` field reports where the two disagree. It makes no
+  causal claim — both are written by the same device clock, so it cannot detect a clock change.
 
 ---
 
@@ -2777,15 +2943,21 @@ stand in for the truth.
 
 #### The channels
 
-| Channel | Emitted by | Guarantee | Value in the reference archive |
+| Channel | Emitter kind | Guarantee | What it bounds |
 | --- | --- | --- | --- |
-| `C1_crash_buffer` (`FATAL EXCEPTION`) | `RuntimeInit.java:84-86` → `Log.printlns(Log.LOG_ID_CRASH, …)` | ring buffer, complete until wrap | **271 distinct** |
-| `C2_am_crash` | `EventLogTags.logtags:56` | ring-wrapped, lossy | **39**, last at `00:27:20.158` — misses 87 % |
-| `C3_dropbox_crash` | `AMS:9766`; rate-limited to 6 per `(process, eventType)` (`DropboxRateLimiter.java:39`) | rate-limited | **6** `osdouble` entries, all within `00:27:01`–`00:27:04` |
-| `C4_tombstone_files` | `tombstoned.cpp:127-133` | ring of `tombstoned.max_tombstone_count` (default 32) | **50 + 50 `.pb`**, all `2026-05-20` |
-| `C5_am_proc_died` | `EventLogTags.logtags:22` | ring-wrapped | 39 (coverage 0.314) |
-| `C6_manager_kill` | `AppErrors.java:902` | one per manager decision | **273** |
-| `C7_rescueparty` | `RescueParty.java:822` | one per mitigation attempt | **55** |
+| `crash_buffer` (`FATAL EXCEPTION`) | `logcat_tag` | ring buffer, complete until wrap | **the authoritative Java crash count** |
+| `am_crash_event_log` | `event_log_tag` | ring-wrapped, lossy | a bounded fraction of the loop; the event log's buffer covers well under the whole log window |
+| `dropbox_crash` | `dumpsys_section` | rate-limited per `(process, eventType)` | first occurrences only; the rate limit is not published by any archive |
+| `tombstone_files` | `zip_entry_listing` | ring of `tombstoned.max_tombstone_count` | the retained tombstone set, which may predate this boot |
+| `am_proc_died` | `event_log_tag` | ring-wrapped | process death over the event-log window only |
+| `manager_kill_lines` | `logcat_tag` | one line per manager decision | manager actions taken, distinct-matched |
+| `rescueparty_lines` | `logcat_tag` | one line per mitigation attempt | mitigation attempts, distinct-matched |
+
+**The guarantee column is platform behaviour, not an observation.** A tool cannot read any of
+it from a bugreport: no archive records a ring size, a rate limit, or a writer's intent. That is
+why the same information appears twice in this document — as prose here, where a reader can see
+the reasoning once, and as a measured `coverage_ratio` on each `counts.<name>_hits` block, which
+*is* derivable from the bytes. The artifact carries only the latter.
 
 **Rule adopted: the crash count is always taken from the crash buffer (`C1`), the only complete
 channel.** The other six are attached as *corroboration with their own counts and their own
@@ -2813,7 +2985,8 @@ The thirteen envelope keys, plus:
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `capture_ref` | object | yes | Points at `system.json#/capture`, plus `pid_max` and `min_crash_interval_ms` if read. |
-| `channels` | array of object | yes | One entry per channel, with `authoritative_for_count`. |
+| `channels` | array of object | yes | One entry per channel. Carries `emitter_kind`; `authoritative_for_count` is replaced by a single top-level `count_authority`. |
+| `count_authority` | object | yes | `{channel, rule}`. **One top-level object naming which channel bounds the count and the published rule for choosing it.** The previous form was a per-channel `authoritative_for_count` boolean, which restated a policy decision on every row and let two channels disagree about it. |
 | `java_crash_groups` | array of object | yes | Java crash signatures with their occurrence sets. |
 | `java_crash_incidents` | array of object | yes | One entry per distinct Java crash. |
 | `native_crash_groups` | array of object | yes | Native crash signatures. |
@@ -2835,15 +3008,17 @@ signature = (language, exception_class_or_signal, top_frame_normalised)
 
 #### Loop versus isolated
 
-A group is a **crash loop** when all five hold:
+A group is a **crash loop** when all five hold. **The five thresholds are configurable inputs,
+not constants baked into the tool.** Each is published in `classification.thresholds`, so an
+artifact states the bar it applied and a reader can re-apply it differently:
 
-| Criterion | Field | Threshold | Source of the threshold |
+| Criterion | Field | Default threshold | Where the default comes from |
 | --- | --- | --- | --- |
-| Repeat count | `repeat_count` | ≥ 5 | Above `RATE_LIMIT_ALLOWED_ENTRIES_DEFAULT = 6` (`DropboxRateLimiter.java:39`) — a rate limiter that lets 6 through is evidence the platform itself already saw 5+ as "the same problem". |
+| Repeat count | `repeat_count` | ≥ 5 | Chosen so the bar sits just under the platform's own rate limiter (`DropboxRateLimiter.java:39`, `RATE_LIMIT_ALLOWED_ENTRIES_DEFAULT = 6`) — a limiter that lets 6 through is evidence the platform already treated 5+ as the same problem. **The limit itself is not published by any archive**, so it is a default, not a measurement. |
 | Rate | `rate_per_second` | ≥ 1.0 | The loop must be faster than human retry. |
-| Window | `window_seconds` | ≤ 300 | `EXPIRED_REPORT_TIME_MS = 10 s` and `CONSECUTIVE_ANR_TIME_MS = 2 min` (`AnrHelper.java:56,61`) are the platform's own "this is one event, not a trend" bounds. |
-| Continuity | `inter_gap_max_seconds` | ≤ 120 (= `MIN_CRASH_INTERVAL`) | The platform's own `quickCrash` test is `now < crashTime + MIN_CRASH_INTERVAL` (`AppErrors.java:896-897`), with `MIN_CRASH_INTERVAL = 2*60*1000` (`ActivityManagerConstants.java:227,636`), dumped as `min_crash_interval=120000`. |
-| Escalation | `manager_kill_count` or `rescueparty_failure_count` | ≥ 1 | AMS and RescueParty both act only on repetition: `AppErrors.java:897`, `RescueParty.java:822`. |
+| Window | `window_seconds` | ≤ 300 s | Sized against the platform's own "this is one event, not a trend" bounds (`AnrHelper.java:56,61`). |
+| Continuity | `inter_gap_max_ms` | ≤ 120000 | The platform's `quickCrash` test is `now < crashTime + MIN_CRASH_INTERVAL` (`AppErrors.java:896-897`), and `min_crash_interval` **is** printed in the archive's dumpsys output — so this one is read, not assumed. |
+| Escalation | `manager_kill_count` or `rescueparty_failure_count` | ≥ 1 | Both subsystems act only on repetition. |
 
 The `osdouble` group satisfies all five with margin. The bluetooth tombstone group satisfies
 **none** of the window/continuity/escalation criteria — its occurrences span 2 h 35 m and no
@@ -2862,24 +3037,26 @@ manager action is recorded in the log window — so it is correctly classified
 | `signature.signal_number` / `signal_name` | integer / string \| null | yes (native) | | `tombstone_proto_to_text.cpp:476` |
 | `signature.sigcode_name` | string \| null | yes (native) | e.g. `SI_QUEUE`. | same |
 | `signature.top_frame` | string | yes | Normalised, no line numbers. | §grouping key |
-| `signature.abort_message` | string \| null | yes (native) | Sub-grouping hint, **not** in the key. | `tombstone_proto_to_text.cpp:491` |
+| `signature.abort_message_hash` / `abort_message_varies` | string \| null / boolean | yes (native) | The hash of the tombstone's `Abort message:` line, plus whether that message varies within the group. **The message is never published as free text and never used as a grouping key**, because it is unstable across builds: a build-to-build reword would silently split one bug into two. `abort_message_varies: true` forces a sub-grouping by `top_frame`. The reference archive's tombstones split 47 / 3 on this field, so a single group would have hidden a second root cause. |
 | `packages[]` / `package_count` | array / integer | yes | May exceed 1 for `:remote` loops. | `RuntimeInit.java:94` |
 | `repeat_count` | integer | yes | **Distinct** occurrences, de-duplicated. | §274-vs-271 |
 | `raw_line_hits` | integer | yes | Every matching line **before** de-duplication. | — |
 | `duplicate_hits` | integer | yes | `raw_line_hits − repeat_count`. | §274-vs-271 |
-| `duplicate_reason` | string \| null | yes when `duplicate_hits > 0` | `"inlined dropbox logcat copy"` + citation. | `AMS:9890-9900` |
+| `duplicate_reason` | **Removed**, replaced by `duplicate_detection`. | — | The previous value named an AOSP `path:line` and asserted a collector the tool cannot inspect — *no archive byte records which collector re-rendered a line*. Worse, its stated discriminator was a mis-parse: it read a blank uid column as a uid value. |
+| `duplicate_detection` | object | yes | `{method, duplicate_pids}`. `method` ∈ `same_pid_same_second` — the actual rule, decided from bytes — and `duplicate_pids` lists the pids seen more than once. **A statement about what matched, not about who produced it.** | derived |
 | `first_seen` / `last_seen` | string | yes | Min/max occurrence time. | `logprint.cpp:1552` / `tombstone_proto_to_text.cpp:616` |
 | `window_seconds` | number | yes | `last − first`. | derived |
-| `rate_per_second` | number \| null | yes | Carries `rate_derivation`. | derived |
-| `inter_gap_p50_ms` / `inter_gap_max_ms` | integer \| null | yes | Derived over the gaps between occurrence times. | derived |
+| `rate_per_second` | number \| null | yes | `repeat_count ÷ window_seconds`. **No `rate_derivation` string**: the formula is stated here, so per [§2.9](#29-null-absent-and-raw) rule 4 a sibling string would only restate it. | derived |
+| `inter_gap_p50_ms` / `inter_gap_max_ms` | integer \| null | yes | Derived over the gaps between occurrence times. **Milliseconds in both the field name and the loop criterion** — the reference artifact's criterion table said `inter_gap_max_seconds` while the field table said `_ms`, and an implementer following the first would emit the wrong unit. | derived |
 | `pid_span` | object | yes | `{first, last, distinct_count, pid_max}`. `null` members when the pids are cross-boot and meaningless against this boot. | `logprint.cpp:1553` |
 | `classification` | enum | yes | `crash_loop` / `recurring` / `isolated` / `stale_recurring`. | §loop versus isolated |
-| `classification_reason` | string | yes | Names the thresholds met and failed. | derived |
-| `manager_kill_count` | integer | yes | | `AppErrors.java:902` |
-| `manager_kill_reason` | string \| null | yes | `crashed quickly` / `over process crash limit`. | `AppErrors.java:903` |
-| `rescueparty_failure_count` | integer | yes | | `RescueParty.java:822` |
+| `classification.thresholds` | object | yes | The five values actually applied. Published so `classification` is re-derivable. | — |
+| `classification_met` | array of string | yes | Which criteria fired, by name from the table above. **Replaces `classification_reason`**, which was a sentence naming thresholds met and failed — a paraphrase a reader had to trust rather than check. | derived |
+| `manager_kill_count` | integer | yes | **Distinct** matches. The reference artifact reported a raw line count that included re-rendered copies, so the number exceeded the crash count beside it with no note. | `AppErrors.java:902` |
+| `manager_kill_reason` | string \| null | yes | The printed `Reason:` token, verbatim. One of `crashed quickly`, `over process crash limit`. A value outside that set is a defect: the reference example published `crashed` where the archive prints `crashed quickly`. | `AppErrors.java:903` |
+| `rescueparty_failure_count` | integer | yes | **Distinct** matches, same de-duplication as `manager_kill_count`. | `RescueParty.java:822` |
 | `rescueparty_disabled` | boolean \| null | yes | | observed in archive |
-| `corroboration[]` | array of object | yes | One entry per channel, each with its own count and completeness. | §channels |
+| `corroboration[]` | array of object | yes | One entry per channel: `{channel, count, count_kind}` where `count_kind` ∈ `event_log_rows`, `logcat_lines_distinct`, `logcat_lines_raw`. **The previous form mixed raw line counts, de-duplicated counts, and event-log rows in one array of plain integers**, so a consumer could not tell which convention applied to which row — and that is the one thing `corroboration` exists to prevent. | §channels |
 | `provenance` | object | yes | | — |
 
 ##### `crash_incidents[]`
@@ -2904,7 +3081,7 @@ One entry per distinct crash — the thing a loop groups over.
 | `process_uptime_seconds` | integer \| null | yes (native) | **Process-relative monotonic — never a wall clock.** | `tombstone_proto_to_text.cpp:617` |
 | `flags_hex` | string \| null | yes | `ApplicationInfo.flags`. | `AMS:9643` / `logtags:56` |
 | `crash_handler` | string \| null | yes | | `AMS:9818` `Crash-Handler:` |
-| `evidence_channels[]` | array of string | yes | | §channels |
+| `evidence_channels[]` | array of object | yes | As in `anr.json`: `{channel, join_basis}`, where `join_basis` ∈ `same_logcat_line`, `same_pid_and_window`, `heuristic`. A bare array of names claimed agreement the archive never records. | §channels |
 | `provenance` | object | yes | | — |
 
 #### The 274-versus-271 finding
@@ -2914,18 +3091,23 @@ Raw `FATAL EXCEPTION` count is **274**. Decomposing by region:
 | Region | Line range | `FATAL EXCEPTION` |
 | --- | --- | --- |
 | A — first `SYSTEM LOG` (`logcat -v threadtime … -d *:v`) | 9116–53708 | 38 |
-| B — `DROPBOX SYSTEM APP CRASHES` (inlined logcat) | 53709–653372 | **3** |
-| C — trailing `SYSTEM LOG` (`… -T 2026-09-24 00:27:20.000`) | 653373–end | 233 |
+| B — `DROPBOX SYSTEM APP CRASHES` (inlined logcat) | 652155–652449 | **3** |
+| C — trailing `SYSTEM LOG` (`… -T <timestamp>`) | 653373–682949 | 233 |
 | | **total** | **274** |
 
-The 3 in region B are the crashes of pids **5769, 9384, 9408** — each of which *also* appears
-once in region C. They are the same three events, printed a second time because
-`addErrorToDropBox` inlines logcat into the dropbox body (`ActivityManagerService.java:9890-9900`,
-`logcatLines` from `ERROR_LOGCAT_PREFIX`), and dumpstate renders
-`dumpsys dropbox -p system_app_crash` at `dumpstate.cpp:1859`.
+> **Region B's line range was wrong in the previous revision.** It was given as `53709–653372`,
+> but `53709` is the *duration footer* of the first `SYSTEM LOG` and the `DROPBOX SYSTEM APP
+> CRASHES` section actually spans `652155–652449` — and that section contains **zero**
+> `FATAL EXCEPTION` lines. The three hits live in the dumpsys/inline-logcat region, not in the
+> section the range named. A locator that points at a section which does not contain the evidence
+> is worse than no locator, because a consumer who checks it concludes the evidence is absent.
+
+The duplicates in region B are found by **`(pid, second)`** — the three pids that appear twice
+are exactly the three that appear once in region A and once in region C. That rule is decided from
+bytes alone and needs no knowledge of which collector re-rendered them.
 
 **Therefore: 271 distinct crashes, 274 raw lines.** This is the "a raw grep count is never a
-finding" rule demonstrated rather than asserted — and the naive `PID:` key produces the same
+finding" rule demonstrated rather than asserted — and the naive `pid` key produces the same
 three phantom repeats, because those are exactly the three pids that appear twice.
 
 **PID-recycling claim, corrected.** The earlier "PIDs recycled ~3 times" reading is wrong. 271
@@ -2944,33 +3126,38 @@ line of the crash buffer, so the loop is **still running at capture**.
 
 | Fact | Value | Read from |
 | --- | --- | --- |
-| Package | `com.android.car.cluster.osdouble` | `AndroidRuntime: Process:` — the only crashing package |
-| Exception | `java.lang.IllegalArgumentException` — the only exception type, 274/274 | 3rd line of each block |
-| Top frame | `com.android.internal.util.Preconditions.checkArgumentNonnegative(Preconditions.java:347)` | frame 1 |
-| Next frames | `android.view.WindowInsets.inset(WindowInsets.java:1155)` → `:1128` → `PhoneWindow.lambda$static$0(PhoneWindow.java:166)` → `PhoneWindow$$ExternalSyntheticLambda1.onContentApplyWindowInsets` | frames 2–5 |
-| First / last crash | `00:27:01.751` (pid 1116) / `00:27:51.970` (pid 9985) | |
-| Window | **50.219 s** | derived |
-| Rate | **5.396 crashes/s** | derived |
-| Inter-crash gaps (270 gaps) | min 84 ms, **p50 133 ms**, **max 1851 ms** | derived |
-| Distinct pids | **271 of 271**, monotonic 1116 → 9985 | `pid_max = 32768` |
-| Manager kills / RescueParty | **273** / **55** | `AppErrors.java:902` / `RescueParty.java:822` |
-| Kill reason | `Reason: crashed` (`quickCrash`, `MIN_CRASH_INTERVAL = 120000`) | `ActivityManagerConstants.java:227,636`; `min_crash_interval=120000` at line 365413 |
-| uid | 1000 (system) | logcat uid column |
+| Package | `<crashing_package>` | `AndroidRuntime: Process:` — the only crashing package |
+| Exception | the only exception type, present in every block | 3rd line of each block |
+| Top frame | `<normalised frame 1 symbol>` | frame 1 |
+| Next frames | frames 2–5, symbols only, line numbers dropped | frames 2–5 |
+| First / last crash | two stamps inside the log window | |
+| Window | derived | derived |
+| Rate | derived | derived |
+| Inter-crash gaps | min / p50 / max over the gaps | derived |
+| Distinct pids | monotonic across the window | `pid_max` read from the archive |
+| Manager kills / RescueParty | two distinct-match counts | `AppErrors.java:902` / `RescueParty.java:822` |
+| Kill reason | the printed `Reason:` token, verbatim | `min_crash_interval` printed in the dumpsys output |
+| uid | from the logcat uid column, resolved | logcat uid column |
 
-**Incident 2 — the old native group.** Every tombstone is dated 2026-05-20.
+**Incident 2 — the old native group.** Every tombstone predates the capture by months.
 
 | Fact | Value |
 | --- | --- |
-| File mtimes | `2026-05-20 02:35:42` → `2026-05-20 05:10:56` (span 2 h 35 m 14 s) |
-| In-file `Timestamp:` on `tombstone_00` | `2026-05-20 04:00:14.502971422+0700` |
-| `Cmdline:` | `com.google.android.bluetooth` — **50 of 50** |
-| `signal` | `6 (SIGABRT)` — **50 of 50** |
-| Example `Abort message:` | `'system/gd/hci/hci_layer.cc:214 handle_command_response: Waiting for SET_EVENT_MASK(0x0c01), got RESET(0x…)'` |
-| Age at capture | **126.80 days** |
-| Grouping | **one** incident, 50 occurrences |
+| File mtimes | two stamps from the ZIP directory, with the span derived |
+| In-file `Timestamp:` on one entry | the entry's own header stamp |
+| `Cmdline:` | one package name, present in every tombstone |
+| `signal` | one signal, present in every tombstone |
+| `Abort message:` | **two distinct values across the 50 tombstones** |
+| Grouping | **two** groups, 47 and 3 occurrences |
 
-This is a completely separate incident from the `osdouble` loop: different language, different
-signal class, different date, and it never touched `com.android.car.cluster.osdouble`.
+> **The previous revision reported this as one group of 50.** The `Abort message:` field splits
+> the 50 tombstones 47 / 3 — the three minority entries abort from `stack_manager.cc` at startup
+> rather than from `hci_layer.cc` on a command response. Fusing them hid a second root cause. The
+> spec's own grouping table already names the abort message as the discriminator for native groups;
+> the worked example simply did not apply it.
+
+This is a completely separate incident from the Java loop: different language, different signal
+class, different date, and it never touched the crashing package.
 
 #### Worked example
 
@@ -2979,109 +3166,111 @@ signal class, different date, and it never touched `com.android.car.cluster.osdo
   "schema_version": 1,
   "artifact": "crashes",
 
-  "capture_ref": { "source": "system.json#/capture", "pid_max": 32768, "min_crash_interval_ms": 120000 },
+  "capture_ref": { "source": "system.json#/capture", "pid_max": <pid_max>, "min_crash_interval_ms": <ms> },
 
   "counts": {
     "fatal_exception_hits": {
       "pattern": "FATAL EXCEPTION", "pattern_kind": "substring", "case_sensitive": true,
-      "raw_count": 274, "matched_evidence": 271, "suppressed_noise": 3, "not_emitted_by_platform": 0,
-      "suppressed_noise_note": "3 crashes (pid 5769, 9384, 9408) are inlined a second time inside DROPBOX SYSTEM APP CRASHES by fetchLogcatBuffers (ActivityManagerService.java:9890-9900); the prefix uid differs (5769 vs 1000) while the message pid matches, which is the signature of a re-rendered record",
-      "coverage": { "window_start": "2026-09-24T00:26:47.418+07:00", "window_end": "2026-09-24T00:27:52.080+07:00",
+      "raw_count": <n>, "matched_evidence": <n>, "suppressed_noise": <n>, "not_emitted_by_platform": 0,
+      "suppressed_noise_note": "the suppressed lines are second renderings of crashes already counted: each duplicates another occurrence on (pid, second), and its logcat prefix uid differs from the uid in the message body",
+      "coverage": { "window_start": "<window_start>", "window_end": "<window_end>",
                     "archive_window": "capture.log_window", "coverage_ratio": 1.0 },
       "regions": [
-        { "archive_path": "<main_entry>", "section_title": "SYSTEM LOG", "section_ordinal": 0,
-          "line_start": 27742, "line_end": 53708, "line_count": 38 },
-        { "archive_path": "<main_entry>", "section_title": "DROPBOX SYSTEM APP CRASHES", "section_ordinal": 0,
-          "line_start": 53709, "line_end": 653372, "line_count": 3 },
+        { "archive_path": "<main_entry>", "section_title": "<section_title>", "section_ordinal": 0,
+          "line_start": <line>, "line_end": <line>, "line_count": <n> },
+        { "archive_path": "<main_entry>", "section_title": "<section_title>", "section_ordinal": 0,
+          "line_start": <line>, "line_end": <line>, "line_count": <n> },
         { "archive_path": "<main_entry>", "section_title": "SYSTEM LOG", "section_ordinal": 1,
-          "line_start": 653373, "line_end": 682949, "line_count": 233 }
+          "line_start": <line>, "line_end": <line>, "line_count": <n> }
       ]
     },
     "tombstone_hits": {
       "pattern": "tombstone", "pattern_kind": "substring", "case_sensitive": true,
-      "raw_count": 749, "matched_evidence": 0, "suppressed_noise": 749, "not_emitted_by_platform": 0,
-      "suppressed_noise_note": "no '*** *** ***' tombstone banner exists anywhere in the main entry; the 50 real tombstones live in FS/data/tombstones/ as ZIP entries, which is where this artifact looks",
+      "raw_count": <n>, "matched_evidence": 0, "suppressed_noise": <n>, "not_emitted_by_platform": 0,
+      "suppressed_noise_note": "no tombstone banner exists anywhere in the main entry; the real tombstones live in FS/data/tombstones/ as ZIP entries, which is where this artifact looks",
       "coverage": { "window_start": null, "window_end": null, "archive_window": "capture.log_window", "coverage_ratio": null },
       "regions": [
         { "archive_path": "<main_entry>", "section_title": "SYSTEM LOG", "section_ordinal": 0,
-          "line_start": 9117, "line_end": 53709, "line_count": 297 },
-        { "archive_path": "<main_entry>", "section_title": "SMAPS OF ALL PROCESSES", "section_ordinal": 0,
-          "line_start": 62923, "line_end": 62972, "line_count": 2 }
+          "line_start": <line>, "line_end": <line>, "line_count": <n> },
+        { "archive_path": "<main_entry>", "section_title": "<section_title>", "section_ordinal": 0,
+          "line_start": <line>, "line_end": <line>, "line_count": <n> }
       ]
     },
     "signal_hits": {
       "pattern": "signal ", "pattern_kind": "substring", "case_sensitive": true,
-      "raw_count": 656, "matched_evidence": 0, "suppressed_noise": 656, "not_emitted_by_platform": 0,
-      "suppressed_noise_note": "417 'signal 9' are init teardown (system/core/init/service.cpp:206-207); 40 'signal 3' are inside Signal Catcher thread dumps. Fatal signals use the form '^signal \\d+ \\(SIG[A-Z0-9]+\\), code' (tombstone_proto_to_text.cpp:476), which occurs 0 times in the main entry",
+      "raw_count": <n>, "matched_evidence": 0, "suppressed_noise": <n>, "not_emitted_by_platform": 0,
+      "suppressed_noise_note": "the suppressed matches are teardown and thread-dump lines whose 'signal' token is not a fatal-signal banner; fatal signals use the tombstone banner form, which this artifact reads from the tombstone ZIP entries instead",
       "coverage": { "window_start": null, "window_end": null, "archive_window": "capture.log_window", "coverage_ratio": null },
       "regions": []
     },
     "am_crash_hits": {
       "pattern": " am_crash:", "pattern_kind": "substring", "case_sensitive": true,
-      "raw_count": 39, "matched_evidence": 39, "suppressed_noise": 0, "not_emitted_by_platform": 0,
-      "coverage": { "window_start": "2026-09-24T00:26:59.872+07:00", "window_end": "2026-09-24T00:27:20.176+07:00",
-                    "archive_window": "capture.log_window", "coverage_ratio": 0.314 },
+      "raw_count": <n>, "matched_evidence": <n>, "suppressed_noise": 0, "not_emitted_by_platform": 0,
+      "coverage": { "window_start": "<window_start>", "window_end": "<window_end>",
+                    "archive_window": "capture.log_window", "coverage_ratio": <coverage_ratio> },
       "regions": [
         { "archive_path": "<main_entry>", "section_title": "EVENT LOG", "section_ordinal": 0,
-          "line_start": 53710, "line_end": 55656, "line_count": 39 }
+          "line_start": <line>, "line_end": <line>, "line_count": <n> }
       ]
     }
   },
 
   "channels": [
-    { "channel": "C1_crash_buffer", "emitted_by": "RuntimeInit.java:84-86", "present": true,
-      "counts_ref": "fatal_exception_hits", "completeness": "complete", "authoritative_for_count": true },
-    { "channel": "C2_am_crash", "emitted_by": "EventLogTags.logtags:56", "present": true,
-      "counts_ref": "am_crash_hits", "completeness": "lossy", "authoritative_for_count": false,
-      "loss_cause": "event-log ring wrapped; last entry 00:27:20.158 vs crash buffer 00:27:51.970 — 87% of crashes absent",
-      "decode_warning": "observed slot order is (PID, User, …) but logtags:56 declares (User, PID, …); no AM_CRASH write site found in frameworks/base — pid is taken from the am_proc_died/am_proc_start pairing" },
-    { "channel": "C3_dropbox_crash", "emitted_by": "ActivityManagerService.java:9766", "present": true,
-      "counts_ref": "dropbox_crash_hits", "completeness": "lossy", "authoritative_for_count": false,
-      "rate_limit_per_tag": 6, "rate_limit_source": "DropboxRateLimiter.java:39" },
-    { "channel": "C4_tombstone_files", "emitted_by": "tombstoned.cpp:127-133", "present": true,
-      "counts_ref": "tombstone_entry_records", "completeness": "lossy", "authoritative_for_count": false,
-      "ring_default": 32, "ring_observed": 50,
-      "note": "tombstone_NN is a RING COUNTER (tombstoned.cpp:196-206); tombstone_00 is NOT the newest file and the number carries no time meaning whatsoever" },
-    { "channel": "C5_am_proc_died", "emitted_by": "EventLogTags.logtags:22", "present": true,
-      "counts_ref": "am_proc_died_hits", "completeness": "lossy", "authoritative_for_count": false },
-    { "channel": "C6_manager_kill", "emitted_by": "AppErrors.java:902", "present": true,
-      "counts_ref": "crashed_too_many_hits", "completeness": "indicative", "authoritative_for_count": false },
-    { "channel": "C7_rescueparty", "emitted_by": "RescueParty.java:822", "present": true,
-      "counts_ref": "rescueparty_hits", "completeness": "indicative", "authoritative_for_count": false }
+    { "channel": "crash_buffer", "emitter_kind": "logcat_tag", "present": true,
+      "counts_ref": "fatal_exception_hits" },
+    { "channel": "am_crash_event_log", "emitter_kind": "event_log_tag", "present": true,
+      "counts_ref": "am_crash_hits" },
+    { "channel": "dropbox_crash", "emitter_kind": "dumpsys_section", "present": true,
+      "counts_ref": "dropbox_crash_hits" },
+    { "channel": "tombstone_files", "emitter_kind": "zip_entry_listing", "present": true,
+      "counts_ref": "tombstone_entry_records" },
+    { "channel": "am_proc_died", "emitter_kind": "event_log_tag", "present": true,
+      "counts_ref": "am_proc_died_hits" },
+    { "channel": "manager_kill_lines", "emitter_kind": "logcat_tag", "present": true,
+      "counts_ref": "crashed_too_many_hits" },
+    { "channel": "rescueparty_lines", "emitter_kind": "logcat_tag", "present": true,
+      "counts_ref": "rescueparty_hits" }
   ],
 
+  "count_authority": {
+    "channel": "crash_buffer",
+    "rule": "the crash count is taken from the crash buffer, the only channel whose window spans the whole log window with no rate limit and no ring retention"
+  },
+
   "java_crash_groups": [
-    { "group_id": "java:java.lang.IllegalArgumentException:Preconditions.checkArgumentNonnegative",
+    { "group_id": "<java_group_id>",
       "language": "java",
       "signature": {
-        "exception_class": "java.lang.IllegalArgumentException",
+        "exception_class": "<exception_class>",
         "signal_number": null, "signal_name": null, "sigcode_name": null,
-        "top_frame": "com.android.internal.util.Preconditions.checkArgumentNonnegative",
-        "abort_message": null
+        "top_frame": "<normalised top frame symbol, no line number>"
       },
-      "packages": ["com.android.car.cluster.osdouble"], "package_count": 1,
+      "packages": ["<crashing_package>"], "package_count": 1,
       "repeat_count": 271,
       "raw_line_hits": 274, "duplicate_hits": 3,
-      "duplicate_reason": "inlined dropbox logcat copy, ActivityManagerService.java:9890-9900",
-      "first_seen": "2026-09-24T00:27:01.751+07:00",
-      "last_seen": "2026-09-24T00:27:51.970+07:00",
-      "window_seconds": 50.219,
-      "rate_per_second": 5.396,
-      "rate_derivation": "repeat_count / window_seconds = 271 / 50.219",
-      "inter_gap_p50_ms": 133, "inter_gap_max_ms": 1851,
-      "pid_span": { "first": 1116, "last": 9985, "distinct_count": 271, "pid_max": 32768 },
+      "duplicate_detection": { "method": "same_pid_same_second", "duplicate_pids": [5769, 9384, 9408] },
+      "first_seen": "<first_seen>",
+      "last_seen": "<last_seen>",
+      "window_seconds": <window_seconds>,
+      "rate_per_second": <rate_per_second>,
+      "inter_gap_p50_ms": <ms>, "inter_gap_max_ms": <ms>,
+      "pid_span": { "first": <pid>, "last": <pid>, "distinct_count": <n>, "pid_max": <pid_max> },
       "classification": "crash_loop",
-      "classification_reason": "repeat_count 271 >= 5; rate 5.396/s >= 1.0; window 50.219s <= 300s; inter_gap_max 1.851s <= MIN_CRASH_INTERVAL 120s; manager_kill_count 273 >= 1; rescueparty_failure_count 55 >= 1",
-      "manager_kill_count": 273, "manager_kill_reason": "crashed",
-      "rescueparty_failure_count": 55, "rescueparty_disabled": true,
+      "classification.thresholds": { "repeat_count": <n>, "rate_per_second": <n>,
+                                      "window_seconds": <n>, "inter_gap_max_ms": <ms>,
+                                      "manager_kill_count": <n> },
+      "classification_met": ["repeat_count", "rate_per_second", "window_seconds",
+                             "inter_gap_max_ms", "manager_kill_count"],
+      "manager_kill_count": <n>, "manager_kill_reason": "<printed Reason: token, verbatim>",
+      "rescueparty_failure_count": <n>, "rescueparty_disabled": <boolean>,
       "corroboration": [
-        { "channel": "C2_am_crash", "count": 39, "completeness": "lossy" },
-        { "channel": "C3_dropbox_crash", "count": 6, "completeness": "lossy" },
-        { "channel": "C5_am_proc_died", "count": 39, "completeness": "lossy" },
-        { "channel": "C6_manager_kill", "count": 273, "completeness": "indicative" },
-        { "channel": "C7_rescueparty", "count": 55, "completeness": "indicative" }
+        { "channel": "am_crash_event_log", "count": <n>, "count_kind": "event_log_rows" },
+        { "channel": "dropbox_crash", "count": <n>, "count_kind": "logcat_lines_distinct" },
+        { "channel": "am_proc_died", "count": <n>, "count_kind": "event_log_rows" },
+        { "channel": "manager_kill_lines", "count": <n>, "count_kind": "logcat_lines_distinct" },
+        { "channel": "rescueparty_lines", "count": <n>, "count_kind": "logcat_lines_distinct" }
       ],
-      "provenance": { "evidence_origin": "C1_crash_buffer", "archive_path": "<main_entry>",
+      "provenance": { "evidence_origin": "crash_buffer", "archive_path": "<main_entry>",
         "section_title": "SYSTEM LOG", "section_ordinal": 0,
         "line_start": 9116, "line_end": 53708,
         "captured_at": "2026-09-24T00:27:01.751+07:00", "captured_at_time_base": "logcat_line",
@@ -3095,38 +3284,42 @@ signal class, different date, and it never touched `com.android.car.cluster.osdo
   ],
 
   "native_crash_groups": [
-    { "group_id": "native:6:SIGABRT:system/gd/hci/hci_layer.cc",
+    { "group_id": "<native_group_id>",
       "language": "native",
       "signature": {
         "exception_class": null,
-        "signal_number": 6, "signal_name": "SIGABRT", "sigcode_name": "SI_QUEUE",
-        "top_frame": "bluetooth::hci::HciLayer::*",
-        "abort_message": "system/gd/hci/hci_layer.cc:214 handle_command_response: Waiting for SET_EVENT_MASK(0x0c01), got RESET(0x0c00)"
+        "signal_number": <n>, "signal_name": "<SIGXXX>", "sigcode_name": "<SI_XXX>",
+        "top_frame": "<demangled top frame, symbol only>",
+        "abort_message_hash": "<hex>",
+        "abort_message_varies": false
       },
-      "packages": ["com.google.android.bluetooth"], "package_count": 1,
-      "repeat_count": 50,
-      "raw_line_hits": 50, "duplicate_hits": 0, "duplicate_reason": null,
-      "first_seen": "2026-05-20T02:35:42+07:00",
-      "last_seen": "2026-05-20T05:10:56+07:00",
-      "window_seconds": 9314,
-      "rate_per_second": 0.0054,
-      "rate_derivation": "repeat_count / window_seconds = 50 / 9314",
+      "packages": ["<package>"], "package_count": 1,
+      "repeat_count": <n>,
+      "raw_line_hits": <n>, "duplicate_hits": 0,
+      "duplicate_detection": { "method": "same_pid_same_second", "duplicate_pids": [] },
+      "first_seen": "<first_seen>",
+      "last_seen": "<last_seen>",
+      "window_seconds": <window_seconds>,
+      "rate_per_second": <rate_per_second>,
       "inter_gap_p50_ms": null, "inter_gap_max_ms": null,
-      "pid_span": { "first": null, "last": null, "distinct_count": null, "pid_max": 32768 },
+      "pid_span": { "first": null, "last": null, "distinct_count": null, "pid_max": <pid_max> },
       "classification": "stale_recurring",
-      "classification_reason": "window 9314s > 300s and rate 0.0054/s < 1.0; no manager_kill or rescueparty corroboration inside the log window; every tombstone predates this boot by 126.80 days",
+      "classification.thresholds": { "repeat_count": <n>, "rate_per_second": <n>,
+                                      "window_seconds": <n>, "inter_gap_max_ms": <ms>,
+                                      "manager_kill_count": <n> },
+      "classification_met": [],
       "manager_kill_count": 0, "manager_kill_reason": null,
       "rescueparty_failure_count": 0, "rescueparty_disabled": null,
-      "corroboration": [ { "channel": "C4_tombstone_files", "count": 50, "completeness": "lossy" } ],
-      "provenance": { "evidence_origin": "C4_tombstone_files", "archive_path": "<main_entry>",
-        "section_title": "DUMP OF SERVICE dropbox", "section_ordinal": 0,
-        "line_start": 652146, "line_end": 652155,
-        "captured_at": "2026-05-20T04:00:14.502971422+07:00", "captured_at_time_base": "tombstone_header",
+      "corroboration": [ { "channel": "tombstone_files", "count": <n>, "count_kind": "logcat_lines_distinct" } ],
+      "provenance": { "evidence_origin": "tombstone_files", "archive_path": "<main_entry>",
+        "section_title": "<section_title>", "section_ordinal": 0,
+        "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "tombstone_header",
         "evidence_time_source": "embedded_trace_stamp",
-        "age_seconds_at_capture": 10996814, "capture_kind": "disk_artifact",
+        "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact",
         "freshness": "stale",
-        "freshness_basis": { "input": "in-file 'Timestamp:' (tombstone_proto_to_text.cpp:616)",
-          "basis": "126.80 days before capture; the tombstone_NN filename index is a ring counter (tombstoned.cpp:205) and carries no time meaning",
+        "freshness_basis": { "input": "the tombstone's own in-file Timestamp line",
+          "basis": "every tombstone in this group predates the capture by months; the tombstone_NN filename index is a ring counter and carries no time meaning, so only the in-file stamp is read",
           "threshold_seconds": 3600 },
         "collector_perturbed": false,
         "collector_perturbed_basis": "the tombstones were read from disk; dumpstate did not generate them" } }
@@ -3134,95 +3327,110 @@ signal class, different date, and it never touched `com.android.car.cluster.osdo
 
   "java_crash_incidents": [
     { "incident_id": "crash-0001",
-      "group_id": "java:java.lang.IllegalArgumentException:Preconditions.checkArgumentNonnegative",
+      "group_id": "<group_id>",
       "language": "java",
-      "package": "com.android.car.cluster.osdouble", "process": "com.android.car.cluster.osdouble",
-      "pid": 1116, "prefix_pid": 1116, "prefix_uid": 1000,
-      "thread_name": "main",
-      "exception_class": "java.lang.IllegalArgumentException",
+      "package": "<crashing_package>", "process": "<crashing_process>",
+      "pid": <pid>, "prefix_pid": <pid>, "prefix_uid": <uid>,
+      "thread_name": "<thread_name>",
+      "exception_class": "<exception_class>",
       "exception_message": null,
       "top_frames": [
-        "com.android.internal.util.Preconditions.checkArgumentNonnegative(Preconditions.java:347)",
-        "android.view.WindowInsets.inset(WindowInsets.java:1155)",
-        "android.view.WindowInsets.inset(WindowInsets.java:1128)",
-        "com.android.internal.policy.PhoneWindow.lambda$static$0(PhoneWindow.java:166)",
-        "com.android.internal.policy.PhoneWindow$$ExternalSyntheticLambda1.onContentApplyWindowInsets(D8$$Synthesized)"
+        "<frame_1_symbol>(<File>:<line>)",
+        "<frame_2_symbol>(<File>:<line>)",
+        "<frame_3_symbol>(<File>:<line>)",
+        "<frame_4_symbol>(<File>:<line>)",
+        "<frame_5_symbol>(<File>:<line>)"
       ],
-      "occurred_at": "2026-09-24T00:27:01.751+07:00",
-      "flags_hex": "0x3088be4d",
-      "crash_handler": "com.android.internal.os.RuntimeInit$KillApplicationHandler",
-      "evidence_channels": ["C1_crash_buffer", "C2_am_crash", "C3_dropbox_crash", "C5_am_proc_died"],
-      "provenance": { "evidence_origin": "C1_crash_buffer", "section_title": "SYSTEM LOG",
-        "section_ordinal": 0, "line_start": 27742, "line_end": 28819,
-        "captured_at": "2026-09-24T00:27:01.751+07:00", "captured_at_time_base": "logcat_line",
-        "age_seconds_at_capture": 15.249, "capture_kind": "live_log",
+      "occurred_at": "<occurred_at>",
+      "flags_hex": "<hex>",
+      "crash_handler": "<ApplicationInfo.Crash-Handler>",
+      "evidence_channels": [
+        { "channel": "crash_buffer", "join_basis": "same_logcat_line" },
+        { "channel": "am_crash_event_log", "join_basis": "same_pid_and_window" },
+        { "channel": "dropbox_crash", "join_basis": "same_pid_and_window" },
+        { "channel": "am_proc_died", "join_basis": "same_pid_and_window" }
+      ],
+      "provenance": { "evidence_origin": "crash_buffer", "section_title": "SYSTEM LOG",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "logcat_line",
+        "age_seconds_at_capture": <age>, "capture_kind": "live_log",
         "freshness": "now",
         "freshness_basis": { "input": "logcat line stamp",
-          "basis": "inside capture.log_window; corroborated by dropbox 'Timestamp: 2026-09-24 00:27:01.754+0700' agreeing within 3 ms (AMS:9783-9786)",
+          "basis": "inside capture.log_window; the inlined dropbox copy carries a Timestamp agreeing with the logcat line stamp to within a few ms",
           "threshold_seconds": 3600 },
         "collector_perturbed": false } }
   ],
 
   "negative_evidence": [
     { "scope": "native tombstone search in the main entry",
-      "statement": "0 occurrences of the tombstone banner '*** *** *** ***' in the 682,951-line main entry; the 50 native crashes exist only as ZIP entries under FS/data/tombstones/",
+      "statement": "0 occurrences of the tombstone banner in the main entry; the native crashes exist only as ZIP entries under FS/data/tombstones/",
       "source": { "archive_path": "<main_entry>", "section_title": null, "section_ordinal": null },
       "authority": "archive_absence" },
-    { "scope": "C2_am_crash channel completeness",
-      "statement": "the event log ends at 00:27:20.158 while the crash buffer continues to 00:27:51.970; 87% of crashes are absent from am_crash and the channel must not be used to bound anything",
+    { "scope": "am_crash_event_log channel coverage",
+      "statement": "the event-log buffer ends before the crash buffer does, so this channel observes a bounded fraction of the loop and must not be used to bound anything",
       "source": { "archive_path": "<main_entry>", "section_title": "EVENT LOG", "section_ordinal": 0 },
       "authority": "archive_absence" }
   ],
 
   "findings": [
     { "id": "crash-0002", "kind": "crash_loop",
-      "title": "com.android.car.cluster.osdouble — 271 IllegalArgumentException in 50.219 s (5.396/s), still crashing at capture",
       "severity": "critical", "unconstrained_severity": "critical", "confidence": "confirmed",
-      "process_key": "2026-09-24T00:26:47.33+07:00/274",
-      "event_time": "2026-09-24T00:27:51.970+07:00",
-      "attributes": { "package": "com.android.car.cluster.osdouble", "language": "java",
+      "process_key": "<boot_epoch>/<start_seq>",
+      "event_time": "<last_seen>",
+      "attributes": { "package": "<crashing_package>", "language": "java",
                       "still_restarting_at_capture": true },
-      "metrics": { "repeat_count": 271, "window_seconds": 50.219, "rate_per_second": 5.396,
-                   "inter_gap_max_ms": 1851, "manager_kill_count": 273, "rescueparty_failure_count": 55 },
+      "metrics": { "repeat_count": <n>, "window_seconds": <window_seconds>, "rate_per_second": <rate_per_second>,
+                   "inter_gap_max_ms": <ms>, "manager_kill_count": <n>, "rescueparty_failure_count": <n> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 27742, "line_end": 27742 },
-        "excerpt": "09-24 00:27:01.751  1000  1116  1116 E AndroidRuntime: FATAL EXCEPTION: main",
-        "excerpt_truncated": false, "excerpt_bytes": 72, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim crash-buffer line>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
-      "provenance": { "evidence_origin": "C1_crash_buffer", "section_title": "SYSTEM LOG",
-        "section_ordinal": 0, "line_start": 27742, "line_end": 28819,
-        "captured_at": "2026-09-24T00:27:51.970+07:00", "captured_at_time_base": "logcat_line",
-        "age_seconds_at_capture": 0, "capture_kind": "live_log", "freshness": "now",
+      "provenance": { "evidence_origin": "crash_buffer", "section_title": "SYSTEM LOG",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "logcat_line",
+        "age_seconds_at_capture": <age>, "capture_kind": "live_log", "freshness": "now",
         "freshness_basis": { "input": "last crash logcat line",
-          "basis": "the 271st crash is the last line of the crash buffer, so the loop is live at capture",
+          "basis": "the final occurrence is the last line of the crash buffer, so the loop is live at capture",
           "threshold_seconds": 3600 },
         "collector_perturbed": false } },
     { "id": "crash-0003", "kind": "signal_absence",
-      "title": "No native tombstone and no fatal signal appears in the main entry; the 50 real crashes are ZIP-only",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
-      "attributes": { "tombstone_hits": 749, "tombstone_real": 0, "signal_hits": 656, "signal_fatal": 0 },
-      "metrics": { "tombstone_files_in_zip": 50 },
+      "attributes": { "tombstone_hits": <n>, "tombstone_real": 0, "signal_hits": <n>, "signal_fatal": 0 },
+      "metrics": { "tombstone_files_in_zip": <n> },
       "evidence": { "archive_path": "FS/data/tombstones/tombstone_00", "kind": "file_entry",
-        "locator": { "line_start": 1, "line_end": 1 },
-        "excerpt": "Timestamp: 2026-05-20 04:00:14.502971422+0700\nCmdline: com.google.android.bluetooth\n…",
-        "excerpt_truncated": true, "excerpt_bytes": 512, "excerpt_complete": false },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "Timestamp: <YYYY-MM-DD HH:MM:SS.nnnnnnnnn+ZZZZ>\nCmdline: <package>\n…",
+        "excerpt_truncated": true, "excerpt_bytes": <n>, "excerpt_complete": false },
       "corroborating_evidence": [],
-      "provenance": { "evidence_origin": "C4_tombstone_files",
+      "provenance": { "evidence_origin": "tombstone_files",
         "archive_path": "FS/data/tombstones/tombstone_00",
-        "captured_at": "2026-05-20T04:00:14.502971422+07:00", "captured_at_time_base": "tombstone_header",
-        "age_seconds_at_capture": 10996814, "capture_kind": "disk_artifact", "freshness": "stale",
+        "captured_at": "<captured_at>", "captured_at_time_base": "tombstone_header",
+        "age_seconds_at_capture": <age>, "capture_kind": "disk_artifact", "freshness": "stale",
         "freshness_basis": { "input": "in-file Timestamp line",
-          "basis": "searched and found: 749 raw 'tombstone' matches in the main entry yield 0 real tombstones; the 50 real ones are ZIP entries 126.80 days old",
+          "basis": "searched and found: the raw tombstone matches in the main entry yield 0 real tombstones; the real ones are ZIP entries far older than this boot",
           "threshold_seconds": 3600 },
         "collector_perturbed": false } }
   ],
 
+  "evidence_gaps": [
+    { "field": "counts.am_crash_hits.coverage.coverage_ratio", "reason": "REGION_EXCLUDED",
+      "detail": "the event-log buffer retains only a bounded interval of the log window, so this channel observes a fraction of the loop. The ratio is published on the match block; no field may bound the crash count from it." },
+    { "field": "java_crash_incidents[].evidence_channels[].join_basis", "reason": "UNVERIFIABLE",
+      "detail": "the event-log and dropbox records carry no key that joins them to a logcat crash line. Join basis is therefore same_pid_and_window, which is a heuristic, and any finding resting only on it must carry confidence: inferred." },
+    { "field": "am_crash_event_log slot layout", "reason": "UNVERIFIABLE",
+      "detail": "the payload is positional and its field order is declared in the platform tag file, which no bugreport contains. pid is taken from the crash buffer and cross-checked against the logcat prefix; no slot is decoded on the strength of a declaration the analyzer cannot read." },
+    { "field": "native_crash_groups[].pid_span", "reason": "UNVERIFIABLE",
+      "detail": "tombstone pids belong to a previous boot and are meaningless against this boot's pid space, so every member is null. Publishing the numbers would invite a comparison that has no meaning." },
+    { "field": "native_crash_groups[].signature.abort_message_hash", "reason": "PARSE_INDETERMINATE",
+      "detail": "the abort message is free text that changes between builds, so it is hashed rather than compared literally. Where the hash varies within a group, abort_message_varies is true and the group is sub-divided by top frame; the message itself is never published as a grouping key." }
+  ],
+
   "notes": [
-    "CRASH_COUNT_IS_271: 274 raw 'FATAL EXCEPTION' lines decompose to 38 + 3 + 233 across three regions; the 3 in DROPBOX SYSTEM APP CRASHES are re-rendered copies of pids 5769/9384/9408 (ActivityManagerService.java:9890-9900).",
-    "CRASH_COUNT_CHANNEL_IS_C1: only the crash buffer is complete. am_crash sees 39 of 271 (87% missing), dropbox is rate-limited to 6, am_proc_died has 0.314 coverage.",
-    "TOMBSTONE_INDEX_IS_A_RING: tombstone_NN is next_artifact_ = (next_artifact_ + 1) % max_artifacts_ (tombstoned.cpp:196-206); tombstone_00 is not the newest file and the number carries no time meaning.",
-    "NO_PID_RECYCLING_IN_LOOP: 271 crashes produced 271 distinct monotonic PIDs. The three apparent repeats were dropbox duplicates, not kernel recycling. process_key remains the identity because PID is still an observation attribute."
+    "CRASH_COUNT_IS_DISTINCT: the raw FATAL EXCEPTION count decomposes across three archive regions; the duplicates in the middle region are found by (pid, second) and suppressed. The published repeat_count is the de-duplicated count, and raw_line_hits minus duplicate_hits equals it.",
+    "CRASH_COUNT_CHANNEL_IS_CRASH_BUFFER: only the crash buffer spans the whole log window with no rate limit. The event-log channel observes a fraction of it; dropbox is rate limited; the count authority is published as count_authority.",
+    "NO_PID_RECYCLING_IN_LOOP: the distinct crashes produced as many distinct, monotonic pids as there were crashes. The apparent repeats were second renderings, not kernel pid recycling. process_key remains the identity because pid is still an observation attribute."
   ]
 }
 ```
@@ -3252,8 +3460,8 @@ signal class, different date, and it never touched `com.android.car.cluster.osdo
   crash buffer — there is no per-crash file anywhere. `FATAL EXCEPTION:` from
   `RuntimeInit.java:92`, `Process: …, PID: …` from `:94-97`, the exception class and frames via
   `Clog_e` → `Log.printlns(Log.LOG_ID_CRASH, …)` at `:84-86`. The schema must carry the
-  reconstruction's own confidence and the logcat line range, and must state that
-  `C1_crash_buffer` is the only authoritative Java channel.
+  reconstruction's own confidence and the logcat line range, and must name `crash_buffer` as
+  the only authoritative Java channel via `count_authority`.
 - **The logcat field order was verified against the archive, not just the format string.** A
   `threadtime` line is `MM-DD HH:MM:SS.mmm  <uid>  <pid> <tid> <L> <tag>: <message>`
   (`logprint.cpp:1552-1554`). For uid 1000 the first numeric column is `683` on **6,788** lines
@@ -3303,34 +3511,23 @@ The thirteen envelope keys, plus:
 | `io` | object | yes | IOTOP, storaged, zram block stats. |
 
 **Why four arrays rather than one.** `system`, `processes[]`, `categories[]`, and `kills[]` are
-emitted by *one* `dumpsys meminfo` call at *one* instant (`AMS:12035` prints a single
-`Uptime: 45590` for the whole dump), so they are mutually consistent and belong in one artifact
-— but they answer different questions and aggregate over different keys. A flat per-process list
+emitted by *one* `dumpsys meminfo` call at *one* instant (the block prints a single uptime
+figure for the whole dump), so they are mutually consistent and belong in one artifact — but
+they answer different questions and aggregate over different keys. A flat per-process list
 would force a choice of granularity and would drop either the verdict or the category split. A
-single global object would drop attribution entirely, and the crash-loop process in this
-archive is only findable from `processes[]`.
+single global object would drop attribution entirely, and a process implicated by a crash loop
+elsewhere in the output set is only findable from `processes[]`.
 
 #### The self-perturbation design
 
-**The problem.** `dumpsys meminfo` (3.525 s) and `bugreport_procdump` (5.187 s) both walk every
-process's page tables. A naive schema that diffs `swap_used` across the archive reports "swap
-grew 212,224 K, ~207 MiB, the device is thrashing" — a pure artifact of the collector.
+**The problem.** The two page-scanning sections — an all-process PSS dump and the
+`bugreport_procdump` walk — both traverse every process's page tables. A naive schema that
+diffs `swap_used` across the archive reports "swap grew ~200 MiB, the device is thrashing" — a
+pure artifact of the collector.
 
 There are **four** swap readings in the reference archive, not two, and the growth tracks the
-dump's own page-scanning work:
-
-| # | Channel | Archive line | Section duration | `SwapTotal` | swap used (K) | ZRAM physical (K) |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | `MEMORY INFO` (`/proc/meminfo`) | 57416 | 0.002 s | 2,285,624 | **18,688** | not in `/proc/meminfo` |
-| 2 | `CPU INFO` (`top` footer) | 57464 | 0.558 s | 2,285,624 | **18,176** | not printed |
-| 3 | `PROCRANK` (`bugreport_procdump`) | 192650 | 0.272 s (parent **5.187 s**) | 2,285,624 | **57,088** | **24,312** |
-| 4 | `DUMPSYS HIGH meminfo` | 319846 | 3.525 s | 2,285,624 | **230,912** | **62,076** |
-
-Snapshot 1 is derived from the raw file (`SwapTotal: 2285624 kB` − `SwapFree: 2266936 kB`);
-snapshots 3 and 4 are printed verbatim. The two steps that scan every page table — 8.712 s
-combined — sit exactly where the number moves. `bugreport_procdump` even appears in its own PSS
-table at `5350 … 68943K … bugreport_procdump` and in the `dumpsys meminfo` by-OOM-adjustment
-list at `2,990K: dumpstate (pid 4149)`. **Growth = 212,224 K ≈ 207 MiB.**
+dump's own page-scanning work. The two steps that scan every page table sit exactly where the
+number moves, and the collector's own processes appear in its own PSS table.
 
 Three design rules follow:
 
@@ -3338,21 +3535,20 @@ Three design rules follow:
    ordered list, and every delta is an *edge* between two identified nodes. There is **no**
    `swap.used_kb` scalar a consumer can compare against another artifact's scalar.
 2. **Make the collector's own cost a measured quantity.** `collection.page_scanning_sections[]`
-   is built from the section footers dumpstate prints unconditionally. The two sections that
-   caused the growth are identified by their **AOSP invocation sites**, not by pattern-matching
-   numbers: `BUGREPORT_PROCDUMP` (`dumpstate.cpp:1693-1694` → `smapinfo.cpp:1244-1248` →
-   `get_all_pids` + `call_smaps_of_all_processes` `:1208-1223` + `call_procrank` `:1233-1242`)
-   and `DUMPSYS HIGH meminfo` (`dumpstate.cpp:1285-1287`, which AOSP gives a **60 s** timeout
-   because *"since 30s is not always enough"*). `PROCRANK`'s own 0.272 s footer is *inside* its
-   parent's 5.187 s and is **not** added again.
+   is built from the section footers dumpstate prints unconditionally. Membership is decided by
+   **what the section prints** — a per-PID row set carrying a swap column — never by AOSP
+   invocation-site knowledge, so the same rule works on a build whose source you cannot read.
+   One section's own footer is *inside* its parent's span and is **not** added again.
 3. **A consumer that only reads `system` cannot be misled.** `system.provenance.collector_perturbed`
-   is `true` for `dumpsys meminfo` and the basis string is mandatory. The same pair, in the same
-   place, expresses "clean" in `cpu.json` — which is why it is in the shared convention rather
-   than in one artifact.
+   is `true` for any reading taken inside such a scan. The same pair, in the same place,
+   expresses "clean" in `cpu.json` — which is why it is in the shared convention rather than in
+   one artifact.
 
-The classification rule is in [§2.1.5](#215-collection). Applied here: **the entire 212,224 K
-of growth falls between the last pre-scan reading and the post-scan reading**, and over that
-interval there are zero kills and `oom_kill 0` → `assessment: "collector"`.
+The classification rule is in [§2.1.5](#215-collection). Applied here: the entire measured
+growth falls between the last pre-scan reading and the post-scan reading, and over that
+interval there are zero kills and `oom_kill 0` — the shape a reader must be able to see before
+concluding anything. **Whether that overlap caused the growth is not a field**, because the
+archive contains no per-process page-fault accounting that would settle it.
 
 #### Field tables
 
@@ -3364,8 +3560,7 @@ Condensed. The owning file's exhaustive row-level table is preserved at
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
 | `channel` | enum | yes | `proc_meminfo` / `top` / `bugreport_procdump` / `dumpsys_meminfo`. | — |
-| `ordinal_in_dump` | integer | yes | Section execution order. dumpstate writes sections in statement order. | `dumpstate.cpp:1687-1709` |
-| `line_start` | integer | yes | Archive locator. | measured |
+| `line_start` | integer | yes | Archive locator, **and the ordering key** per [§2.1.5](#215-collection). **There is deliberately no statement-order field**: dumpstate runs sections on a thread pool, so archive order is *completion* order and no archive recovers the intended order. | measured |
 | `swap_total_kb` | integer | yes | `SwapTotal`. | `android_os_Debug.cpp:391` |
 | `swap_used_kb` | integer \| null | yes | `SwapTotal − SwapFree`; `null` if either absent. **Carries `swap_used_kb_derived`.** | `android_os_Debug.cpp:392` |
 | `zram_physical_kb` | integer \| null | yes | `mem_used_total` summed over zram devices. | `sysmeminfo.cpp:178-206`; `AMS:12812-12819`; `smapinfo.cpp:289-291` |
@@ -3442,18 +3637,20 @@ carries no per-process truth and every consumer must be told so** via
 
 ##### `procstats[]` — never merged
 
-Three sub-sections, three different datasets, three different windows:
+Three sub-sections, three different datasets, three different windows. The shape that matters
+is not the numbers but the mismatch between them:
 
-| Archive line | Sub-section header | `Start time` | `Aggregated over` | ZRam min/avg/max |
-| --- | --- | --- | --- | --- |
-| 578715 | `CURRENT STATS:` | `2026-09-24 00:26:56` | **1** | 61 / 61 / 61 MB |
-| 584168 | `AGGREGATED OVER LAST 24 HOURS:` | **`2026-05-19 00:16:06`** | **4** | 61 / **110** / 125 MB |
-| 590810 | `AGGREGATED OVER LAST 3 HOURS:` | **`2026-05-19 00:16:06`** | **4** | 61 / **110** / 125 MB |
+| Sub-section header | What its start time actually is | `Aggregated over` |
+| --- | --- | --- |
+| `CURRENT STATS:` | inside the capture window | 1 |
+| `AGGREGATED OVER LAST 24 HOURS:` | **months before this boot** | N |
+| `AGGREGATED OVER LAST 3 HOURS:` | **the same value as the 24-hour block** | N |
 
-> **The `LAST 3 HOURS` label is a label, not a fact.** Its `Start time` is 2026-05-19, i.e.
-> **~128 days stale** in a 2026-09-24 capture. A schema that reads `ZRam: 110MB avg` out of the
-> procstats dump and reports it as a device property is wrong by 128 days. `capture_kind` here
-> is **`persisted_aggregate`**, and that is the value that catches it.
+> **The window named in the header is a label, not a fact.** In the reference archive the
+> 3-hour and 24-hour blocks resolve to an identical start time that predates the capture by
+> months. A schema that reads an average out of the aggregate blocks and reports it as a device
+> property is wrong by the staleness of that data. `capture_kind` here is
+> **`persisted_aggregate`**, and that is the value that catches it.
 
 The header block is `ProcessStats.java:1597-1633`: `Start time:` (`:1598-1600`), `Total uptime:`
 (`:1601-1605`), `Total elapsed time:` (`:1606-1609`), the completeness flags
@@ -3468,20 +3665,19 @@ The header block is `ProcessStats.java:1597-1633`: `Start time:` (`:1598-1600`),
 | `period_total_uptime` / `period_total_elapsed` | string \| null | yes | | `ProcessStats.java:1601-1609` |
 | `period_complete` / `period_flags` | boolean / array | yes | The `(partial)` suffix. | `ProcessStats.java:1610-1628` |
 | `aggregated_over_n` | integer \| null | yes | | `ProcessStats.java:1632-1633` |
-| `backing_state_file` | string \| null | yes | `mFile=/data/system/procstats/state-v2-2026-09-24-00-26-56.bin` (archive line 584166). | `ProcessStatsService.java:1362` |
+| `backing_state_file` | string \| null | yes | The `mFile=` path the aggregate block was read from, verbatim. It carries a timestamp in its name, which is a **filename convention, not a measured clock**. | `ProcessStatsService.java:1362` |
 | `sys_mem_usage[]` | array | yes | `{label, sample_count, cached_*, free_*, zram_*, kernel_*, native_*}` min/avg/max. | `SysMemUsageTable.java:142-171` |
-| `checkin_period` | object \| null | yes | `{start_clock, start_realtime_ms, end_realtime_ms, complete, window_ms}` parsed from the `period,…` line. | `ProcessStats.java:2149-2166`; archive line 621752 |
+| `checkin_period` | object \| null | yes | `{start_clock, start_realtime_ms, end_realtime_ms, complete, window_ms}` parsed from the `period,…` line. | `ProcessStats.java:2149-2166` |
 | `provenance` | object | yes | `capture_kind: persisted_aggregate`, `freshness: stale` for both `AGGREGATED` entries. | — |
 
-The checkin twin carries the window in machine-readable form (archive line 621752):
+The checkin twin carries the window in machine-readable form:
 
 ```
-period,2026-09-24-00-26-56,9373,39318,partial
+period,<YYYY-MM-DD-HH-mm-ss>,<realtime_ms>,<realtime_ms>,partial
 ```
 
-⇒ start `2026-09-24 00:26:56`, `mTimePeriodStartRealtime = 9373 ms`, end `elapsedRealtime =
-39318 ms`, **partial** (`FLAG_SHUTDOWN|FLAG_SYSPROPS|FLAG_COMPLETE` all clear). Window length =
-**29,945 ms**.
+⇒ start clock, `mTimePeriodStartRealtime` ms, `elapsedRealtime` ms, **partial** (the
+shutdown / sysprops / complete flags all clear), and a derived window length.
 
 ##### `pressure_indicators`, `kills[]`, `kill_evidence`, `io`, `kernel_memory`
 
@@ -3505,12 +3701,12 @@ period,2026-09-24-00-26-56,9373,39318,partial
 #### Why `am_meminfo` and `am_pss` are structurally zero
 
 This matters because **"0 events" must be distinguishable from "channel broken"**. dumpstate
-captures `EVENT LOG` at `dumpstate.cpp:1028` (archive line 53710), **before** `DUMPSYS HIGH
-meminfo` at line 319846. `am_meminfo` is written *by the meminfo dump itself* (`AMS:12691`,
-inside the same block at `:12686-12695`). So in **every** bugreport whose event log is captured
-before the meminfo dump — i.e. every bugreport 2.0 archive — `am_meminfo` is expected to be `0`.
-Measured alongside `am_proc_start 121`, `am_proc_bound 121`, `am_proc_died 40`,
-`am_uid_running 68`, `am_uid_active 64`.
+captures `EVENT LOG` early in the dump sequence, **before** the memory dumps that write these
+tags. The `am_meminfo` tag is written *by the meminfo dump itself*, so in **every** bugreport
+whose event log is captured before its memory sections — i.e. every bugreport 2.0 archive —
+`am_meminfo` is structurally expected to be `0`. Measured alongside it, the event log does
+carry other process-lifecycle tags at non-zero counts, which is what distinguishes "the log was
+read" from "this one tag could not fire yet".
 
 **A zero here is not evidence of a working memory-telemetry path**, and the schema says so via
 `am_meminfo_absence_reason`.
@@ -3519,40 +3715,42 @@ Measured alongside `am_proc_start 121`, `am_proc_bound 121`, `am_proc_died 40`,
 
 Three distinct clock families, each with its own `capture_kind`:
 
-| Source | `capture_kind` | `captured_at_time_base` | Freshness on this archive |
+| Source | `capture_kind` | `captured_at_time_base` | Freshness |
 | --- | --- | --- | --- |
-| `dumpsys meminfo` summary block | `point_in_time_snapshot` | `dumpsys_section_snapshot` (footer `ending at: 2026-09-24 00:27:36`) | `in_window` |
-| `PROCRANK` rows and footer | `point_in_time_snapshot` | `dumpsys_section_snapshot` | `undated` — raw smaps print no clock |
-| `MEMORY INFO` (`/proc/meminfo`) | `point_in_time_snapshot` | `undetermined` | `undated` — **deliberately unstamped**; `DumpstateInternal.cpp:143-145` suppresses the mtime for `/proc`, `/sys`, and `/d` paths |
+| `dumpsys meminfo` summary block | `point_in_time_snapshot` | `dumpsys_section_snapshot` (from the section footer's `ending at:` stamp) | `in_window` |
+| `PROCRANK` rows and footer | `point_in_time_snapshot` | `undetermined` | `undated` — raw smaps print no clock |
+| `MEMORY INFO` (`/proc/meminfo`) | `point_in_time_snapshot` | `undetermined` | `undated` — **deliberately unstamped**; dumpstate suppresses the mtime for `/proc`, `/sys`, and `/d` paths |
 | `dumpsys procstats` `CURRENT` | `background_sampler` | `dumpsys_section_snapshot` | `in_window` |
-| `dumpsys procstats` `AGGREGATED_*` | **`persisted_aggregate`** | `dumpsys_section_snapshot` | **`stale`** — 128 days |
+| `dumpsys procstats` `AGGREGATED_*` | **`persisted_aggregate`** | `dumpsys_section_snapshot` | **`stale`** — months |
 | `/proc/vmstat` counters | `command_output` | `undetermined` | `undated` — cumulative since boot, but no clock printed |
-| `IOTOP` | `window_delta` → **`command_output`** | `undetermined` | `undated` |
+| IOTOP | `command_output` | `undetermined` | `undated` |
 | lmkd kill log line | `live_log` | `logcat_line` | `in_window` |
 
 **The `undated` rows are the honest ones.** A genuine instantaneous reading with **no printed
 clock at all** is not `stale`; it is unlabelled. Collapsing `undated` into `stale` would make a
 whole class of legitimate evidence look like historical residue and train consumers to ignore
 the field. Collapsing it into `now` is the exact bug this convention exists to prevent. Where a
-snapshot can only be ordered, the schema records `ordinal_in_dump` (dumpstate's statement order
-at `dumpstate.cpp:1687-1709`) rather than inventing a timestamp.
+snapshot can only be ordered, the schema records `line_start` — and says nothing about the
+collector's intended order, because dumpstate runs sections on a thread pool and archive order
+is **completion** order. Any field claiming to recover statement order is unproducible from any
+archive.
 
 **IOTOP's `0.00%` columns are a resolution floor, not a zero.**
-`TimeToTgidPercent` (`iotop.cpp:36-39`) computes `percent = ns / stats.threads() / (time * NSEC_PER_SEC / 100.0f)`
-and clamps at 99.99, printed as `%5.2f%%` (`:255-265`). With `delay = 1` (default,
-`iotop.cpp:104`), `0.00%` means **under 0.1 ms per thread over 1 s** — *not* "no I/O". The same
-rows carry non-zero throughput:
+`TimeToTgidPercent` (`iotop.cpp:36-39`) computes a percentage per thread over the sample window
+and clamps at the top of the range, printed with two decimal places (`:255-265`). A `0.00%`
+therefore means *below the print resolution*, **not** "no I/O". The same rows carry non-zero
+throughput:
 
 ```
-   320 kworker/u8:4       4904      0   4904      0      0  0.00%  0.00%  2.36%  0.00%  2.36%
-  2630 Blocking Thread       0   2308   2308      0     99  0.00%  0.00% 24.65%  0.00% 24.65%
-    54 kswapd0               0      0      0      0      0  0.00%  0.00%  0.72%  0.00%  0.72%
+   <n> <thread_name>       <read>   <write>   <read>   <write>  <n>  0.00%  0.00% <sched_delay>  0.00% <sched_delay>
+  <n> Blocking Thread      0   2308   2308      0     99  0.00%  0.00% 24.65%  0.00% 24.65%
+    <n> <kernel_thread>         0      0      0      0      0  0.00%  0.00%  0.72%  0.00%  0.72%
 ```
 
-The `24.65%` on `Blocking Thread` is **run-queue delay, not I/O** — column 3 of the
+The non-zero figure on `Blocking Thread` is **run-queue delay, not I/O** — column 3 of the
 `delayed on` group is `sched` (`iotop.cpp:234`). This section answers "was anything *waiting*".
-Its own duration footer reads `1.052s` while the measured window is 1 s; the extra 52 ms is
-process setup and the `first`-iteration skip (`iotop.cpp:226-273`).
+Its own duration footer exceeds the nominal sampling window; the excess is process setup and
+the sampling loop's first iteration (`iotop.cpp:226-273`).
 
 #### Worked example
 
@@ -3566,308 +3764,309 @@ Abbreviated; every value was measured on the reference archive.
 
   "collection": {
     "page_scanning_sections": [
-      { "name": "BUGREPORT_PROCDUMP", "line_start": 191000, "line_end": 192895, "duration_ms": 5187,
-        "aosp_source": "dumpstate.cpp:1693-1694 -> smapinfo.cpp:1244-1248" },
-      { "name": "DUMPSYS HIGH meminfo", "line_start": 319846, "line_end": 326112, "duration_ms": 3525,
-        "aosp_source": "dumpstate.cpp:1285-1287 (60s timeout for meminfo)" }
+      { "name": "<section_title>", "line_start": <line>, "line_end": <line>, "duration_ms": <ms>,
+        "pages_scanned_per_pid_row": true },
+      { "name": "<section_title>", "line_start": <line>, "line_end": <line>, "duration_ms": <ms>,
+        "pages_scanned_per_pid_row": true }
     ],
-    "page_scanning_total_ms": 8712,
+    "page_scanning_total_ms": <page_scanning_total_ms>,
     "swap_timeline": [
-      { "channel": "proc_meminfo", "ordinal_in_dump": 1, "line_start": 57416,
-        "swap_total_kb": 2285624, "swap_used_kb": 18688, "swap_used_kb_derived": true,
-        "zram_physical_kb": null, "section_duration_ms": 2,
+      { "channel": "proc_meminfo", "line_start": <line>,
+        "swap_total_kb": <swap_total_kb>, "swap_used_kb": <swap_used_kb>, "swap_used_kb_derived": true,
+        "zram_physical_kb": null, "section_duration_ms": <ms>,
         "provenance": { "evidence_origin": "proc_meminfo", "section_title": "MEMORY INFO", "section_ordinal": 0,
-          "line_start": 57416, "captured_at": null, "captured_at_time_base": "undetermined",
+          "line_start": <line>, "captured_at": null, "captured_at_time_base": "undetermined",
           "age_seconds_at_capture": null, "capture_kind": "point_in_time_snapshot", "freshness": "undated",
           "freshness_basis": { "input": "none",
-            "basis": "raw /proc/meminfo carries no clock (DumpstateInternal.cpp:143-145 suppresses the mtime for /proc paths); positioned only by dump statement order (dumpstate.cpp:1689)",
+            "basis": "a raw /proc/meminfo read carries no clock and dumpstate suppresses the mtime for procfs paths, so this reading is undated",
             "threshold_seconds": 3600 },
-          "collector_perturbed": false,
-          "collector_perturbed_basis": "read of a 0.002 s procfs file" } },
-      { "channel": "top", "ordinal_in_dump": 2, "line_start": 57471,
-        "swap_total_kb": 2285624, "swap_used_kb": 18176, "swap_used_kb_derived": false,
-        "zram_physical_kb": null, "section_duration_ms": 558,
-        "provenance": { "evidence_origin": "cpu_info_top", "section_title": "CPU INFO", "section_ordinal": 0,
+          "collector_perturbed": false, "collector_perturbed_basis": "undated_source" } },
+      { "channel": "top", "line_start": <line>,
+        "swap_total_kb": <swap_total_kb>, "swap_used_kb": <swap_used_kb>, "swap_used_kb_derived": false,
+        "zram_physical_kb": null, "section_duration_ms": <ms>,
+        "provenance": { "evidence_origin": "top", "section_title": "CPU INFO", "section_ordinal": 0,
           "captured_at": null, "captured_at_time_base": "undetermined",
           "age_seconds_at_capture": null, "capture_kind": "command_output", "freshness": "undated",
-          "freshness_basis": { "input": "none", "basis": "top prints no clock", "threshold_seconds": 3600 },
-          "collector_perturbed": true,
-          "collector_perturbed_basis": "top itself is 0.558s of mid-dump work; column semantics unverified (top is not in this source drop)" } },
-      { "channel": "bugreport_procdump", "ordinal_in_dump": 3, "line_start": 192829,
-        "swap_total_kb": 2285624, "swap_used_kb": 57088, "swap_used_kb_derived": false,
-        "zram_physical_kb": 24312, "section_duration_ms": 272,
+          "freshness_basis": { "input": "none", "basis": "the reading carries no printed clock", "threshold_seconds": 3600 },
+          "collector_perturbed": true, "collector_perturbed_basis": "section_measured_during_dump" } },
+      { "channel": "bugreport_procdump", "line_start": <line>,
+        "swap_total_kb": <swap_total_kb>, "swap_used_kb": <swap_used_kb>, "swap_used_kb_derived": false,
+        "zram_physical_kb": <zram_physical_kb>, "section_duration_ms": <ms>,
         "provenance": { "evidence_origin": "procrank", "section_title": "PROCRANK", "section_ordinal": 0,
           "captured_at": null, "captured_at_time_base": "undetermined",
           "age_seconds_at_capture": null, "capture_kind": "point_in_time_snapshot", "freshness": "undated",
-          "freshness_basis": { "input": "none", "basis": "PROCRANK prints no clock",
+          "freshness_basis": { "input": "none", "basis": "the reading carries no printed clock",
             "threshold_seconds": 3600 },
-          "collector_perturbed": true,
-          "collector_perturbed_basis": "read at the end of a 5.187 s full page-table scan" } },
-      { "channel": "dumpsys_meminfo", "ordinal_in_dump": 4, "line_start": 326109,
-        "swap_total_kb": 2285624, "swap_used_kb": 230912, "swap_used_kb_derived": false,
-        "zram_physical_kb": 62076, "section_duration_ms": 3525,
-        "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "DUMP OF SERVICE HIGH meminfo:",
-          "section_ordinal": 0, "line_start": 319846,
-          "captured_at": "2026-09-24T00:27:36+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-          "age_seconds_at_capture": 19, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
-          "freshness_basis": { "input": "dumpsys footer 'ending at: 2026-09-24 00:27:36'",
+          "collector_perturbed": true, "collector_perturbed_basis": "section_measured_during_dump" } },
+      { "channel": "dumpsys_meminfo", "line_start": <line>,
+        "swap_total_kb": <swap_total_kb>, "swap_used_kb": <swap_used_kb>, "swap_used_kb_derived": false,
+        "zram_physical_kb": <zram_physical_kb>, "section_duration_ms": <ms>,
+        "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "<section_title>",
+          "section_ordinal": 0, "line_start": <line>,
+          "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+          "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
+          "freshness_basis": { "input": "the section footer's ending-at stamp",
             "basis": "inside capture.log_window", "threshold_seconds": 3600 },
           "collector_perturbed": true,
-          "collector_perturbed_basis": "taken inside a 3.525 s all-process PSS scan that AOSP itself budgets 60 s for (dumpstate.cpp:1285-1287)" } }
+          "collector_perturbed_basis": "section_measured_during_dump" } }
     ],
-    "swap_growth_kb": 212224,
-    "self_inflicted_growth_kb": 212224,
-    "assessment": "collector",
-    "assessment_basis": "swap used rose 18688K -> 230912K (+212224K) entirely between the last pre-scan reading (top, 18176K) and the post-meminfo reading (230912K); the two page-scanning sections in that interval totalled 8712ms of the dump's own work. am_kill_count=0, /proc/vmstat oom_kill=0, dumpsys meminfo status 'normal'. Classified as collector-induced paging, not device memory pressure."
+    "swap_growth_kb": <swap_growth_kb>,
+    "page_scanning_ms_in_interval": <page_scanning_ms_in_interval>
   },
 
   "system": {
-    "total_ram_kb": 3047508,
-    "memory_level": "normal",
-    "free_ram_kb": 1173179,
-    "free_ram_components_kb": { "cached_pss": 409539, "cached_kernel": 491268, "free": 272372 },
-    "free_pct": 0.3850,
-    "used_ram_kb": 1983938,
-    "used_pss_kb": 1597806,
-    "kernel_used_kb": 386132,
-    "total_pss_kb": 2007345,
-    "total_pss_kb_derivation": "used_pss_kb (AMS:12803) + free_ram_components_kb.cached_pss (AMS:12703) = 1597806 + 409539; the literal '2,007,345' does not appear in the archive",
-    "lost_ram_kb": 71072,
-    "lost_ram_pct": 0.0233,
-    "tuning": { "memory_class_mb": 192, "large_memory_class_mb": 576, "oom_adj_score_kb": 322560,
-                "restore_limit_kb": 107520, "low_ram": null, "high_end_gfx": true },
-    "gpu_kb": 0,
-    "dma_buf": { "total_kb": 0, "mapped_kb": 0, "unmapped_kb": 0, "heaps_kb": 0, "heaps_pool_kb": 0 },
-    "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "DUMP OF SERVICE HIGH meminfo:",
-      "section_ordinal": 0, "line_start": 319846, "line_end": 326112,
-      "captured_at": "2026-09-24T00:27:36+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-      "age_seconds_at_capture": 19, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
-      "freshness_basis": { "input": "dumpsys footer",
-        "basis": "body prints 'Uptime: 45590 Realtime: 45590' (AMS:12036); the reading cannot outlive the boot and falls inside capture.log_window",
+    "total_ram_kb": <total_ram_kb>,
+    "memory_level": "<status, verbatim>",
+    "free_ram_kb": <free_ram_kb>,
+    "free_ram_components_kb": { "cached_pss": <kb>, "cached_kernel": <kb>, "free": <kb> },
+    "free_pct": <free_pct>,
+    "used_ram_kb": <used_ram_kb>,
+    "used_pss_kb": <used_pss_kb>,
+    "kernel_used_kb": <kernel_used_kb>,
+    "total_pss_kb": <total_pss_kb>,
+    "lost_ram_kb": <lost_ram_kb>,
+    "lost_ram_pct": <lost_ram_pct>,
+    "tuning": { "memory_class_mb": <n>, "large_memory_class_mb": <n>, "oom_adj_score_kb": <kb>,
+                "restore_limit_kb": <kb>, "low_ram": null, "high_end_gfx": true },
+    "gpu_kb": <gpu_kb>,
+    "dma_buf": { "total_kb": <kb>, "mapped_kb": <kb>, "unmapped_kb": <kb>, "heaps_kb": <kb>, "heaps_pool_kb": <kb> },
+    "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "<section_title>",
+      "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+      "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+      "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
+      "freshness_basis": { "input": "the section footer's ending-at stamp",
+        "basis": "the body prints an uptime and realtime reading, so the reading cannot outlive this boot and falls inside capture.log_window",
         "threshold_seconds": 3600 },
       "collector_perturbed": true,
-      "collector_perturbed_basis": "3.525 s of the dump's own all-process PSS scan immediately precedes the summary block" }
+      "collector_perturbed_basis": "section_measured_during_dump" }
   },
 
   "swap": {
-    "swap_total_kb": 2285624, "swap_used_kb": 230912, "swap_used_pct": 0.1010,
-    "zram_physical_kb": 62076, "zram_physical_pct_of_ram": 0.0204,
-    "compression_ratio": 3.719, "compression_ratio_derived": true,
-    "zram_block_io": { "read_ios": 916, "read_sectors": 7328, "write_ios": 5314,
-                       "write_sectors": 42512, "io_ticks": 344,
-                       "window": "cumulative since boot", "line_start": 57314 },
-    "provenance": { "captured_at": "2026-09-24T00:27:36+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-      "age_seconds_at_capture": 19, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
-      "collector_perturbed": true, "collector_perturbed_basis": "same dumpsys meminfo pass" }
+    "swap_total_kb": <swap_total_kb>, "swap_used_kb": <swap_used_kb>, "swap_used_pct": <pct>,
+    "zram_physical_kb": <zram_physical_kb>, "zram_physical_pct_of_ram": <pct>,
+    "compression_ratio": <compression_ratio>, "compression_ratio_derived": true,
+    "zram_block_io": { "read_ios": <n>, "read_sectors": <n>, "write_ios": <n>,
+                       "write_sectors": <n>, "io_ticks": <n>,
+                       "window": "cumulative since boot", "line_start": <line> },
+    "provenance": { "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+      "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
+      "collector_perturbed": true, "collector_perturbed_basis": "section_measured_during_dump" }
   },
 
   "processes": [
-    { "pid": 2021, "process_name": "com.google.android.carassistant:search", "user_id": 10,
-      "pss_total_kb": 212862, "swap_pss_kb": 1128, "zswap_kb": 0, "zswap_estimated": true,
-      "rss_total_kb": 401072, "source_channel": "dumpsys_meminfo", "line_start": 325705 },
-    { "pid": 2418, "process_name": "com.google.android.tts", "user_id": 10,
-      "pss_total_kb": 173260, "swap_pss_kb": 5539, "rss_total_kb": 314704,
-      "source_channel": "dumpsys_meminfo", "line_start": 325706 },
-    { "pid": 683, "process_name": "system", "user_id": null,
-      "pss_total_kb": 136998, "swap_pss_kb": 9651, "rss_total_kb": 275732,
-      "source_channel": "dumpsys_meminfo", "line_start": 325707 },
-    { "pid": 5350, "process_name": "bugreport_procdump", "user_id": null,
-      "pss_total_kb": 68943, "swap_pss_kb": 0, "rss_total_kb": 71900,
-      "source_channel": "bugreport_procdump", "line_start": 192650,
-      "note": "the collector itself" },
-    { "pid": 4149, "process_name": "dumpstate", "user_id": null,
-      "pss_total_kb": 2990, "swap_pss_kb": 0, "source_channel": "dumpsys_meminfo", "line_start": 325903 }
+    { "pid": <pid>, "process_name": "<process_name>", "user_id": <user_id>,
+      "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb>, "zswap_kb": <zswap_kb>, "zswap_estimated": true,
+      "rss_total_kb": <rss_total_kb>, "source_channel": "dumpsys_meminfo", "line_start": <line> },
+    { "pid": <pid>, "process_name": "<process_name>", "user_id": <user_id>,
+      "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb>, "rss_total_kb": <rss_total_kb>,
+      "source_channel": "dumpsys_meminfo", "line_start": <line> },
+    { "pid": <pid>, "process_name": "<process_name>", "user_id": null,
+      "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb>, "rss_total_kb": <rss_total_kb>,
+      "source_channel": "dumpsys_meminfo", "line_start": <line> },
+    { "pid": <pid>, "process_name": "bugreport_procdump", "user_id": null,
+      "pss_total_kb": <pss_total_kb>, "swap_pss_kb": 0, "rss_total_kb": <rss_total_kb>,
+      "source_channel": "bugreport_procdump", "line_start": <line> },
+    { "pid": <pid>, "process_name": "dumpstate", "user_id": null,
+      "pss_total_kb": <pss_total_kb>, "swap_pss_kb": 0, "source_channel": "dumpsys_meminfo", "line_start": <line> }
   ],
 
   "categories": [
-    { "category": "Native",      "depth": 0, "parent_category": null,        "pss_total_kb": 577687, "swap_pss_kb": 100386 },
-    { "category": ".apk mmap",   "depth": 0, "parent_category": null,        "pss_total_kb": 389207, "swap_pss_kb":   3300 },
-    { "category": "Dalvik",      "depth": 0, "parent_category": null,        "pss_total_kb": 212420, "swap_pss_kb":  14154 },
-    { "category": ".Heap",       "depth": 1, "parent_category": "Dalvik",   "pss_total_kb": 185027, "swap_pss_kb":   5608 },
-    { "category": "Dalvik Other","depth": 0, "parent_category": null,        "pss_total_kb": 113592, "swap_pss_kb":  14375 },
-    { "category": "Unknown",     "depth": 0, "parent_category": null,        "pss_total_kb": 104125, "swap_pss_kb":  41441 },
-    { "category": ".so mmap",    "depth": 0, "parent_category": null,        "pss_total_kb":  84097, "swap_pss_kb":  34991 }
+    { "category": "Native",      "depth": 0, "parent_category": null,        "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb> },
+    { "category": ".apk mmap",   "depth": 0, "parent_category": null,        "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb> },
+    { "category": "Dalvik",      "depth": 0, "parent_category": null,        "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb> },
+    { "category": ".Heap",       "depth": 1, "parent_category": "Dalvik",   "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb> },
+    { "category": "Dalvik Other","depth": 0, "parent_category": null,        "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb> },
+    { "category": "Unknown",     "depth": 0, "parent_category": null,        "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb> },
+    { "category": ".so mmap",    "depth": 0, "parent_category": null,        "pss_total_kb": <pss_total_kb>, "swap_pss_kb": <swap_pss_kb> }
   ],
 
   "procstats": [
-    { "sub_section": "CURRENT", "scope_label_verbatim": "CURRENT STATS:",
-      "period_start_clock": "2026-09-24 00:26:56", "period_total_uptime": "+51s928ms",
-      "period_complete": false, "period_flags": ["partial", "swapped-out-pss"], "aggregated_over_n": 1,
-      "checkin_period": { "start_clock": "2026-09-24-00-26-56", "start_realtime_ms": 9373,
-                          "end_realtime_ms": 39318, "complete": false, "window_ms": 29945 },
-      "provenance": { "captured_at": "2026-09-24T00:26:56+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
+    { "sub_section": "CURRENT", "scope_label_verbatim": "<verbatim sub-section header>",
+      "period_start_clock": "<YYYY-MM-DD HH:MM:SS>", "period_total_uptime": "<uptime as printed>",
+      "period_complete": false, "period_flags": ["partial", "swapped-out-pss"], "aggregated_over_n": <n>,
+      "checkin_period": { "start_clock": "<YYYY-MM-DD-HH-mm-ss>", "start_realtime_ms": <ms>,
+                          "end_realtime_ms": <ms>, "complete": false, "window_ms": <ms> },
+      "provenance": { "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
         "capture_kind": "background_sampler", "freshness": "in_window",
-        "freshness_basis": { "input": "Start time line", "basis": "1 sample over 29.945 s, inside capture.log_window",
+        "freshness_basis": { "input": "the printed Start time line",
+          "basis": "a single sample whose window falls inside capture.log_window",
           "threshold_seconds": 3600 },
         "collector_perturbed": false,
-        "collector_perturbed_basis": "sample taken by the AMS background collector, not by the dump" } },
+        "collector_perturbed_basis": "section_measured_before_dump" } },
 
-    { "sub_section": "AGGREGATED_24H", "scope_label_verbatim": "AGGREGATED OVER LAST 24 HOURS:",
-      "period_start_clock": "2026-05-19 00:16:06", "aggregated_over_n": 4,
+    { "sub_section": "AGGREGATED_24H", "scope_label_verbatim": "<verbatim sub-section header>",
+      "period_start_clock": "<YYYY-MM-DD HH:MM:SS>", "aggregated_over_n": <n>,
       "period_complete": false, "period_flags": ["partial"],
-      "backing_state_file": "/data/system/procstats/state-v2-2026-09-24-00-26-56.bin",
-      "provenance": { "captured_at": "2026-05-19T00:16:06+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
+      "backing_state_file": "<path to the on-disk state file the block was read from>",
+      "provenance": { "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
         "capture_kind": "persisted_aggregate", "freshness": "stale",
-        "freshness_basis": { "input": "Start time line",
-          "basis": "period_start_clock 2026-05-19 is 128 days before the 2026-09-24 capture; read from on-disk state via ProcessStatsService.java:862-866 (getStatsOverTime). The '24 HOURS' label is a query parameter, not a fact about the data.",
+        "freshness_basis": { "input": "the printed Start time line",
+          "basis": "the period start precedes this boot by months; the window size in the header is a query parameter, not a fact about the data. capture_kind persisted_aggregate is the deciding input, not the wall clock alone.",
           "threshold_seconds": 3600 },
-        "collector_perturbed": false, "collector_perturbed_basis": "predates the dump by months" } },
+        "collector_perturbed": false, "collector_perturbed_basis": "read_from_disk" } },
 
-    { "sub_section": "AGGREGATED_3H", "scope_label_verbatim": "AGGREGATED OVER LAST 3 HOURS:",
-      "period_start_clock": "2026-05-19 00:16:06", "aggregated_over_n": 4,
+    { "sub_section": "AGGREGATED_3H", "scope_label_verbatim": "<verbatim sub-section header>",
+      "period_start_clock": "<YYYY-MM-DD HH:MM:SS>", "aggregated_over_n": <n>,
       "period_complete": false, "period_flags": ["partial"],
-      "provenance": { "captured_at": "2026-05-19T00:16:06+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
+      "provenance": { "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
         "capture_kind": "persisted_aggregate", "freshness": "stale",
-        "freshness_basis": { "input": "Start time line",
-          "basis": "identical start time to the 24H block; the '3 HOURS' label is not supported by the data",
+        "freshness_basis": { "input": "the printed Start time line",
+          "basis": "the period start is identical to the longer-window block above, so the label in the header is not supported by the data",
           "threshold_seconds": 3600 },
-        "collector_perturbed": false, "collector_perturbed_basis": "predates the dump by months" } }
+        "collector_perturbed": false, "collector_perturbed_basis": "read_from_disk" } }
   ],
 
   "pressure_indicators": {
-    "psi_memory": { "some": { "avg10": 3.54, "avg60": 1.14, "avg300": 0.26, "total_us": 964143 },
-                    "full": { "avg10": 0.97, "avg60": 0.29, "avg300": 0.06, "total_us": 275904 } },
-    "psi_io":     { "some": { "avg10": 12.36, "avg60": 5.82, "avg300": 1.50, "total_us": 4881350 },
-                    "full": { "avg10": 2.84, "avg60": 1.82, "avg300": 0.50, "total_us": 1794988 } },
-    "vmstat_oom_kill": 0,
-    "vmstat_pswpin": null, "vmstat_pswpout": null,
-    "vmstat_absence_reason": "the exact 'pswpin'/'pswpout' key names in the VIRTUAL MEMORY STATS block were not confirmed in this pass",
+    "psi_memory": { "some": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> },
+                    "full": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> } },
+    "psi_io":     { "some": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> },
+                    "full": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> } },
+    "vmstat_oom_kill": <n>,
+    "vmstat_pswpin": <n>, "vmstat_pswpout": <n>,
     "provenance": { "capture_kind": "command_output", "captured_at": null, "captured_at_time_base": "undetermined",
       "age_seconds_at_capture": null, "freshness": "undated",
       "freshness_basis": { "input": "none",
-        "basis": "kernel cumulative counters carry no clock; they cannot outlive the boot",
+        "basis": "kernel cumulative counters carry no printed clock; they cannot outlive this boot but cannot be placed in the log window either",
         "threshold_seconds": 3600 },
       "collector_perturbed": false,
-      "collector_perturbed_basis": "kernel counters, not a dump-scanned value" }
+      "collector_perturbed_basis": "undated_source" }
   },
 
   "kills": [],
   "kill_evidence": {
-    "lmkd_alive": true, "lmkd_using_psi": true, "lmkd_kill_log_matches": 0,
-    "vmstat_oom_kill": 0, "am_kill_count": 0,
-    "am_low_memory_count": 1, "am_low_memory_value": 2,
-    "am_low_memory_meaning": "emitted at 00:27:00.045 from AppProfiler.java:1624 with value lruSize=2. Fires when !haveBackgroundProcessLOSP() (AppProfiler.java:1611-1612), i.e. the lowest oom_adj band was already emptied. NOT memory exhaustion: memory_level is 'normal' and lmkd killed nothing.",
-    "am_meminfo_count": 0, "am_pss_count": 0,
-    "am_meminfo_absence_reason": "structural: EVENT LOG is captured at dumpstate.cpp:1028 (archive line 53710) before the meminfo dump at line 319846, and am_meminfo is written by that meminfo dump itself (ActivityManagerService.java:12691).",
-    "provenance": { "capture_kind": "live_log", "captured_at": "2026-09-24T00:27:00.045+07:00",
+    "lmkd_alive": true, "lmkd_using_psi": true, "lmkd_kill_log_matches": <n>,
+    "vmstat_oom_kill": <n>, "am_kill_count": <n>,
+    "am_low_memory_count": <n>, "am_low_memory_value": <n>,
+    "am_meminfo_count": <n>, "am_pss_count": <n>,
+    "provenance": { "capture_kind": "live_log", "captured_at": "<captured_at>",
       "captured_at_time_base": "logcat_line", "freshness": "in_window", "collector_perturbed": false }
   },
 
   "io": {
-    "iotop": { "window_ms": 1000, "line_start": 56843, "section_duration_ms": 1052,
-      "row_granularity": "thread", "sort_column": "total",
-      "max_io_delay_pct": 0.00, "max_swap_delay_pct": 0.00,
-      "max_sched_delay_pct": 24.65, "max_mem_delay_pct": 0.00,
-      "resolution_floor_note": "io/swap/mem '0.00%' is a %.2f resolution floor (iotop.cpp:36-39, 255-265) meaning <0.1ms per thread over 1s, NOT zero I/O. Rows carry up to 4904 KiB/s read." },
-    "storaged": { "line_start": 348900, "basis": "cumulative since process start",
-                  "top_reader": "shared:android.uid.system 1134249 fg_rchar / 13627392 fg_rbytes" },
+    "iotop": { "window_ms": <ms>, "line_start": <line>, "section_duration_ms": <ms>,
+      "row_granularity": "thread", "sort_column": "<column>",
+      "max_io_delay_pct": <pct>, "max_swap_delay_pct": <pct>,
+      "max_sched_delay_pct": <pct>, "max_mem_delay_pct": <pct>,
+      "resolution_floor_note": "a 0.00% reading is a fixed-decimal resolution floor, not zero I/O. The same rows carry non-zero throughput, so a zero delay percentage must not be read as an absence of wait." },
+    "storaged": { "line_start": <line>, "basis": "cumulative since process start",
+                  "top_reader": "<uid or process, verbatim> <rchar> fg_rchar / <bytes> fg_rbytes" },
     "provenance": { "capture_kind": "command_output", "captured_at": null, "captured_at_time_base": "undetermined",
       "freshness": "undated",
-      "freshness_basis": { "input": "none", "basis": "iotop prints no clock", "threshold_seconds": 3600 },
+      "freshness_basis": { "input": "none", "basis": "the reading carries no printed clock", "threshold_seconds": 3600 },
       "collector_perturbed": true,
-      "collector_perturbed_basis": "iotop runs mid-dump and its own threads appear in the table" }
+      "collector_perturbed_basis": "section_measured_during_dump" }
   },
 
   "counts": {
     "am_kill_hits": {
       "pattern": "am_kill", "pattern_kind": "word_boundary", "case_sensitive": true,
-      "raw_count": 0, "matched_evidence": 0, "suppressed_noise": 0, "not_emitted_by_platform": 0,
+      "raw_count": <n>, "matched_evidence": <n>, "suppressed_noise": <n>, "not_emitted_by_platform": 0,
       "suppressed_noise_note": null,
-      "coverage": { "window_start": "2026-09-24T00:26:59.872+07:00", "window_end": "2026-09-24T00:27:20.176+07:00",
-                    "archive_window": "capture.log_window", "coverage_ratio": 0.314 },
+      "coverage": { "window_start": "<window_start>", "window_end": "<window_end>",
+                    "archive_window": "capture.log_window", "coverage_ratio": <coverage_ratio> },
       "regions": []
     }
   },
 
   "findings": [
     { "id": "mem-001", "kind": "no_pressure",
-      "title": "No memory pressure at capture: status normal, 38.50% free RAM, zero lmkd kills, zero OOM kills, PSI memory full avg10 0.97%",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
-      "attributes": { "memory_level": "normal" },
-      "metrics": { "free_pct": 0.3850, "psi_memory_full_avg10": 0.97, "vmstat_oom_kill": 0, "lmkd_kill_count": 0 },
+      "attributes": { "memory_level": "<status, verbatim>" },
+      "metrics": { "free_pct": <free_pct>, "psi_memory_full_avg10": <pct>, "vmstat_oom_kill": <n>, "lmkd_kill_count": <n> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 326101, "line_end": 326101 },
-        "excerpt": "Total RAM: 3,047,508K (status normal)",
-        "excerpt_truncated": false, "excerpt_bytes": 37, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim total-RAM line carrying the status>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
-      "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "DUMP OF SERVICE HIGH meminfo:",
-        "section_ordinal": 0, "line_start": 326101, "line_end": 326110,
-        "captured_at": "2026-09-24T00:27:36+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-        "age_seconds_at_capture": 19, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
-        "freshness_basis": { "input": "dumpsys footer", "basis": "inside capture.log_window",
+      "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "<section_title>",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+        "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
+        "freshness_basis": { "input": "the section footer's ending-at stamp",
+          "basis": "inside capture.log_window",
           "threshold_seconds": 3600 },
-        "collector_perturbed": true, "collector_perturbed_basis": "see system.provenance" } },
+        "collector_perturbed": true, "collector_perturbed_basis": "section_measured_during_dump" } },
 
-    { "id": "mem-002", "kind": "collector_artifact",
-      "title": "Swap grew +212224K (18,688K -> 230,912K) during the capture, attributed to the collector",
+    { "id": "mem-002", "kind": "swap_delta",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
-      "attributes": { "assessment": "collector" },
-      "metrics": { "swap_growth_kb": 212224, "page_scanning_total_ms": 8712, "vmstat_oom_kill": 0 },
+      "attributes": { "page_scanning_ms_in_interval": <page_scanning_ms_in_interval> },
+      "metrics": { "swap_growth_kb": <swap_growth_kb>, "page_scanning_total_ms": <ms>, "vmstat_oom_kill": <n> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 326109, "line_end": 326109 },
-        "excerpt": "     ZRAM:    62,076K physical used for   230,912K in swap (2,285,624K total swap)",
-        "excerpt_truncated": false, "excerpt_bytes": 79, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim swap/ZRAM summary line>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
       "provenance": { "evidence_origin": "collection_swap_timeline", "archive_path": "<main_entry>",
-        "section_title": "DUMP OF SERVICE HIGH meminfo:", "section_ordinal": 0,
-        "line_start": 57416, "line_end": 326109,
+        "section_title": "<section_title>", "section_ordinal": 0,
+        "line_start": <line>, "line_end": <line>,
         "captured_at": null, "captured_at_time_base": "undetermined",
         "age_seconds_at_capture": null, "capture_kind": "command_output", "freshness": "undated",
         "freshness_basis": { "input": "none",
-          "basis": "a delta between two snapshots; neither endpoint carries a clock, so the EDGE is undated even though its endpoints are ordered",
+          "basis": "this is a delta between two snapshots; neither endpoint carries a clock, so the EDGE is undated even though its endpoints are ordered by line_start",
           "threshold_seconds": 3600 },
         "collector_perturbed": true,
-        "collector_perturbed_basis": "collection.page_scanning_sections" } },
+        "collector_perturbed_basis": "section_measured_during_dump" } },
 
     { "id": "mem-003", "kind": "stale_aggregate",
-      "title": "dumpsys procstats AGGREGATED 3H and 24H blocks both start 2026-05-19 00:16:06 — 128 days stale",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
       "attributes": { "capture_kind": "persisted_aggregate" },
-      "metrics": { "age_seconds": 11055606, "aggregated_over_n": 4 },
+      "metrics": { "age_seconds": <age>, "aggregated_over_n": <n> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 584169, "line_end": 584172 },
-        "excerpt": "          Start time: 2026-05-19 00:16:06\n        Total uptime: +1h30m52s599ms\n  Total elapsed time: +1h30m52s599ms (partial) libart.so\n     Aggregated over: 4",
-        "excerpt_truncated": false, "excerpt_bytes": 163, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim procstats header block>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
-      "provenance": { "evidence_origin": "dumpsys_procstats", "section_title": "DUMP OF SERVICE HIGH procstats:",
-        "section_ordinal": 0, "line_start": 584168, "line_end": 590810,
-        "captured_at": "2026-05-19T00:16:06+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-        "age_seconds_at_capture": 11055606, "capture_kind": "persisted_aggregate", "freshness": "stale",
-        "freshness_basis": { "input": "Start time line",
-          "basis": "128 days before capture; capture_kind persisted_aggregate is the deciding input, not the wall clock alone",
+      "provenance": { "evidence_origin": "dumpsys_procstats", "section_title": "<section_title>",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+        "age_seconds_at_capture": <age>, "capture_kind": "persisted_aggregate", "freshness": "stale",
+        "freshness_basis": { "input": "the printed Start time line",
+          "basis": "the period start precedes this boot by months; capture_kind persisted_aggregate is the deciding input, not the wall clock alone",
           "threshold_seconds": 3600 },
-        "collector_perturbed": false, "collector_perturbed_basis": "predates the dump" } },
+        "collector_perturbed": false, "collector_perturbed_basis": "read_from_disk" } },
 
     { "id": "mem-004", "kind": "largest_allocator",
-      "title": "Top PSS holder is com.google.android.carassistant:search at 212,862K; category leader is Native at 577,687K — a code/image-heavy, not heap-heavy, profile",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
-      "process_key": "2026-09-24T00:26:47.33+07:00/61", "event_time": null,
-      "attributes": { "package_name": "com.google.android.carassistant:search" },
-      "metrics": { "pss_total_kb": 212862, "total_pss_kb": 2007345, "native_category_kb": 577687 },
+      "process_key": "<boot_epoch>/<start_seq>", "event_time": null,
+      "attributes": { "package_name": "<package_name>" },
+      "metrics": { "pss_total_kb": <pss_total_kb>, "total_pss_kb": <total_pss_kb>, "native_category_kb": <pss_total_kb> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 325705, "line_end": 325705 },
-        "excerpt": "  212,862K: com.google.android.carassistant:search (pid 2021)",
-        "excerpt_truncated": false, "excerpt_bytes": 61, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim per-process PSS row>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
-      "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "DUMP OF SERVICE HIGH meminfo:",
-        "section_ordinal": 0, "line_start": 325705, "line_end": 326040,
-        "captured_at": "2026-09-24T00:27:36+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-        "age_seconds_at_capture": 19, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
-        "freshness_basis": { "input": "dumpsys footer", "basis": "inside capture.log_window",
+      "provenance": { "evidence_origin": "dumpsys_meminfo", "section_title": "<section_title>",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+        "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
+        "freshness_basis": { "input": "the section footer's ending-at stamp",
+          "basis": "inside capture.log_window",
           "threshold_seconds": 3600 },
-        "collector_perturbed": true, "collector_perturbed_basis": "3.525 s all-process scan" } }
+        "collector_perturbed": true, "collector_perturbed_basis": "section_measured_during_dump" } }
+  ],
+
+  "evidence_gaps": [
+    { "field": "kill_evidence.am_meminfo_count", "reason": "REGION_EXCLUDED",
+      "detail": "the event log is captured before the memory dump that writes this tag, so a zero here is structural for any archive whose event log precedes its memory sections and says nothing about whether memory telemetry works." },
+    { "field": "kill_evidence.am_low_memory_count", "reason": "UNVERIFIABLE",
+      "detail": "the byte value is read, but its meaning depends on a platform writer the analyzer cannot inspect. It must not be read as memory exhaustion without cross-checking memory_level and the lmkd kill count, which is why no interpreted field is published for it." },
+    { "field": "collection.swap_timeline[].captured_at", "reason": "NOT_PRINNED",
+      "detail": "a raw procfs read and a top footer print no clock, and dumpstate suppresses the mtime for procfs and sysfs paths. These readings are undated rather than stale; a snapshot that carries no clock is unlabelled, and collapsing undated into stale would make legitimate evidence look like historical residue." },
+    { "field": "collection.swap_timeline[] ordering", "reason": "UNVERIFIABLE",
+      "detail": "dumpstate runs sections on a thread pool and archive order is completion order, so no statement-execution order can be recovered from any archive. The timeline is therefore ordered by line_start and nothing claims to know the collector's intended order." },
+    { "field": "processes[].zswap_kb", "reason": "PARSE_INDETERMINATE",
+      "detail": "the per-process ZSwap column is a device-wide compression ratio apportioned across processes, not a measurement of that process. Every row therefore carries zswap_estimated: true and no consumer may treat the number as this process's own swapped bytes." },
+    { "field": "swap.zram_orig_size_kb / zram_compressed_size_kb", "reason": "NOT_PRINNED",
+      "detail": "no bugreport section exposes the original or compressed data size for a zram device, so no such field exists in this schema. Only the physical bytes used are published." }
   ],
 
   "notes": [
-    "SWAP_GROWTH_IS_COLLECTOR_INDUCED: 212,224 K of swap growth (207 MiB) falls entirely between the last pre-page-scan reading and the post-scan reading, with 8,712 ms of the dump's own page-table walking in between and no kill or OOM. This is NOT a device memory finding.",
-    "PROCSTATS_LABELS_ARE_QUERY_PARAMETERS: 'AGGREGATED OVER LAST 3 HOURS' and 'LAST 24 HOURS' both resolve to Start time 2026-05-19 00:16:06 (ProcessStatsService.java:862-866). Their ZRam avg 110 MB and Native avg 766 MB describe May, not this boot.",
-    "AM_LOW_MEMORY_IS_NOT_EXHAUSTION: it fires when !haveBackgroundProcessLOSP() (AppProfiler.java:1611-1612), i.e. when the LOWEST oom_adj band is empty. A count of 1 with status 'normal' is a lowest-priority-caches-exhausted signal.",
-    "AM_MEMINFO_AND_AM_PSS_ARE_STRUCTURALLY_ZERO: the event log is captured before the meminfo dump that writes them.",
-    "ZSWAP_IS_APPORTIONED_NOT_MEASURED: PROCRANK ZSwap = proportional_swap_ * (mem_zram_kb / swap_used_kb) (processrecord.cpp:114, smapinfo.cpp:351-353). Every zswap_kb carries zswap_estimated: true.",
-    "NO_ZRAM_COMPRESSED_SIZE: libmeminfo skips mm_stat fields 1 and 2 (sysmeminfo.cpp:184) and takes mem_used_total. No bugreport output exposes orig_data_size or compr_data_size, so those fields do not exist in this schema."
+    "SWAP_DELTA_OVERLAPS_PAGE_SCANNING: a measurable amount of the swap growth falls between two identified timeline nodes whose interval contains page-scanning sections. The overlap is published as page_scanning_ms_in_interval; whether it explains the delta is a causal claim and belongs in README.md, not in this artifact.",
+    "PROCSTATS_LABELS_ARE_QUERY_PARAMETERS: the longer and shorter aggregate headers resolve to the same printed start time, so the window named in the header is a query parameter rather than a fact about the data.",
+    "ZSWAP_IS_APPORTIONED_NOT_MEASURED: every zswap_kb in this artifact is a device-wide ratio apportioned per process. Each row carries zswap_estimated: true."
   ]
 }
 ```
@@ -3906,10 +4105,12 @@ Abbreviated; every value was measured on the reference archive.
   `am_low_memory: 2` with `status normal` and zero lmkd kills. But the tag is *named*
   `am_low_memory` and a reader could reasonably read it the other way. The interpretation is
   therefore carried as mandatory prose (`am_low_memory_meaning`) rather than left implicit.
-- **Which of two `/proc/meminfo` reads fired.** `dumpstate.cpp:1689` and `dumpstate.cpp:1951`
-  both read `/proc/meminfo`; the archive contains one `MEMORY INFO` block. The
-  `ordinal_in_dump` values above assume `:1689` fired, which is consistent with `:1689`
-  appearing immediately before `CPU INFO` in the archive. Not settled.
+- **Which of two `/proc/meminfo` reads fired.** Two dumpstate call sites read `/proc/meminfo`
+  (`dumpstate.cpp:1689` and `dumpstate.cpp:1951`) and the archive contains one `MEMORY INFO`
+  block, so the tool cannot tell which produced it. **No field depends on the answer** —
+  `swap_timeline` is ordered by `line_start` and nothing claims statement order — so this is
+  recorded here as an open question rather than as an `evidence_gaps[]` entry, because it does
+  not make any published value indeterminate.
 - **`busy_pct`-style derived percentages need unit tests.** AOSP publishes only raw
   milliseconds (`CpuInfoReader.java:859-880`) and never a busy percentage, so any derived
   percentage needs a unit test against a hand-summed row. This was learned the hard way: a
@@ -3944,20 +4145,20 @@ The thirteen envelope keys, plus:
 | `power_history` | object \| null | yes | batterystats / powerstats — **quarantined, always stale.** |
 
 **Four disjoint arrays, and the utilization/contention split is the substantive decision.** In
-this archive the two point in opposite directions: `61% TOTAL` with `35% system_server` looks
-like a load problem, while `25% irq` with `steal = 0` on all four cores says the guest is being
-*interrupted*, not busy. A single score would say "CPU problem". Two arrays say
-"compute-bound in `system_server`, host interrupt injection, and no lock pathology worth
-reporting".
+this archive the two point in opposite directions: a middling `TOTAL` with a dominant
+`system_server` share looks like a load problem, while a high `irq` with `steal = 0` on every
+core says the guest is being *interrupted*, not busy. A single score would say "CPU problem".
+Two arrays say "compute-bound in `system_server`, host interrupt injection, and no lock
+pathology worth reporting".
 
 The other two separations are about **units**, not judgement:
 
 - `utilization` is a **windowed ratio** whose window is arbitrary and must travel with it.
-- `per_cpu_core` is **cumulative milliseconds since boot**, read at `mLastReadUptimeMillis =
-  11192`. It is *not* a percentage and *not* the same window. Merging them produces a number
-  that means nothing.
-- `processes[]` shares `utilization`'s window exactly (same `ProcessCpuTracker` delta), so it
-  is attributable and gets a share field.
+- `per_cpu_core` is **cumulative milliseconds since boot**, read at one `read_at_uptime_ms`.
+  It is *not* a percentage and *not* the same window. Merging them produces a number that means
+  nothing.
+- `processes[]` shares `utilization`'s window exactly (one tracker delta), so it is
+  attributable and gets a share field.
 - `contention` is measured in **blocking events**, sampled at an unknown rate, over the **log
   window** — not the CPU window.
 
@@ -3970,28 +4171,28 @@ gate at `:2156-2160`), driven by a thread that has run since `system_server` sta
 `CpuBinder.dumpCritical` merely prints **the last two samples it already has** — it does not
 take a fresh one (`:2332-2335`).
 
-The header carries the window explicitly (`ProcessCpuTracker.java:854-889`), and archive lines
-3685–3686 read:
+The header carries the window explicitly (`ProcessCpuTracker.java:854-889`), in the form:
 
 ```
-CPU usage from 22612ms to 20840ms ago (2026-09-24 00:26:56.813 to 2026-09-24 00:26:58.585):
+CPU usage from <n>ms to <n>ms ago (<start> to <end>):
 ```
 
-- window length = **1.772 s**
-- window ended **20.415 s before** the dump printed it
-  (`--------- 0.023s was the duration of dumpsys cpuinfo, ending at: 2026-09-24 00:27:19 ------`,
-  line 3710)
-- window ended **18.415 s before dumpstate began** (`== dumpstate: 2026-09-24 00:27:17`, line 2)
-- `cpuinfo` is `DUMP_FLAG_PRIORITY_CRITICAL` (`AppProfiler.java:2348`), so it is the **first**
-  dumpsys block in the whole archive
+From those printed numbers alone a tool can derive three facts, and all three are load-bearing:
 
-**The CPU numbers cannot be inflated by the collection, because the sample was taken and frozen
-before dumpstate started.** `collector_perturbed: false` with the basis naming the 18.415 s gap.
-`capture_kind: background_sampler` is what records *why*.
+- **window length** = `end − start`
+- **the window ended before the dump printed it** — the section's own duration footer gives
+  the print instant, so the gap is computable rather than asserted
+- **whether that gap reaches back to the start of the dump** — compare it against
+  `capture.captured_at` in `system.json`
+
+**The CPU numbers therefore cannot be inflated by the collection, and this is checkable rather
+than assumed.** `collector_perturbed: false` is only published when the measured window closed
+*before* dumpstate began; otherwise the field is `true`. `capture_kind: background_sampler` is
+what records why the gap exists — this channel prints pre-existing samples from a background
+thread rather than taking a fresh one during the dump.
 
 `top` (`dumpstate.cpp:1690`) is the opposite: it runs mid-dump, and its own `Swap:` line already
-shows the collector's effect (18,176 K used versus 18,688 K at the immediately preceding
-`/proc/meminfo` read).
+shows the collector's effect against the immediately preceding `/proc/meminfo` read.
 
 #### `steal` is structurally unavailable in the global ratio
 
@@ -4004,13 +4205,14 @@ stops at `softirq`. Steal is available only per-CPU, via the `cpu_monitor` binde
 and it is why `utilization[].pct_steal` is `null` for `dumpsys_cpuinfo` with a stated reason
 rather than `0`.
 
-#### Contention: two distinct producers, both real, neither a count
+#### Contention: three distinct channels, all real, none a count
 
-`grep -c "Monitor contention with tid"` → **0**.
-`grep -ci "Long monitor contention"` → **33**.
-They are different producers and both are cited.
+A search for `Monitor contention with tid` returns **0**, while a case-insensitive search for
+`Long monitor contention` returns **33**. These are **different producers with different
+thresholds**, and a tool that conflates them reports a channel as broken when it is merely
+silent. All three are published; none is a count of stalls.
 
-**C1 — ART Java monitor.** Line shape (`art/runtime/monitor.cc:592-598` + `402-420`):
+**ART Java monitor.** Line shape (`art/runtime/monitor.cc:592-598` + `402-420`):
 
 ```
 Long monitor contention with owner <owner_name> (<owner_tid>) at <owner_method>(<file>:<line>) waiters=<N> in <waiter_method> for <PrettyDuration>
@@ -4020,20 +4222,20 @@ Long monitor contention with owner <owner_name> (<owner_tid>) at <owner_method>(
 at second granularity with fractions — hence `1.780s`, `181ms`, `12.3us`.
 
 Threshold: `kLongWaitMs = 100 * kDebugThresholdFudgeFactor` (`monitor.cc:54`) and
-`kDebugThresholdFudgeFactor = kIsDebugBuild ? 10 : 1` (`monitor.cc:53`) — so **on this userdebug
-build the floor is 1000 ms**. That is a real schema caveat: *a 200 ms Java-monitor stall produces
-no line here, and its absence is not evidence of health.*
+`kDebugThresholdFudgeFactor = kIsDebugBuild ? 10 : 1` (`monitor.cc:53`) — so the floor is
+**1000 ms on a debuggable build and 100 ms on a user build.** That is a real schema caveat, and
+it is not knowable from the archive: *a stall well below the floor produces no line here, and
+its absence is not evidence of health.*
 
-Measured distribution of the 33 (all wait strings): max **1.780 s**, min 105 ms; **6 events
-≥ 1 s** — 4 in `com.google.android.gms` (pid 2488) and 2 in `com.google.android.gms.persistent`
-(pids 1972, 2433), all inside the `com.google.android.gms@254232109@25.42.32` dex, owner method
-`axte.h(java.lang.String)`, with `waiters=` running `0,1,2,3` on four consecutive lines 6 ms
-apart. A monotonic waiter queue on one monitor is a `MessageQueue.next()` shape.
-**Zero of the 33 are in `system_server`** — the `system_server` contention in this archive is
-the *other* kind, C13.
+Measured distribution of the long-contention lines (all wait strings): max **1.780 s**, min
+105 ms; **6 events ≥ 1 s**, all inside two processes, all on the **same monitor**, all naming
+the same owner method and dex, with `waiters=` climbing `0,1,2,3` on consecutive lines a few
+milliseconds apart. A monotonic waiter queue on one monitor is a `MessageQueue.next()` shape.
+**Zero of them are in `system_server`** — the `system_server` contention in this archive is the
+*other* kind, the sampled channel below.
 
-**C13 — `dvm_lock_sample`.** `Monitor::LogContentionEvent` is emitted only with probability equal
-to how far the wait exceeded the configured threshold (`monitor.cc:529-536`):
+**`dvm_lock_sample` — the sampled channel.** `Monitor::LogContentionEvent` is emitted only with
+probability equal to how far the wait exceeded the configured threshold (`monitor.cc:529-536`):
 
 ```cpp
 if (wait_ms >= lock_profiling_threshold_) { sample_percent = 100; }
@@ -4041,7 +4243,8 @@ else                                        { sample_percent = 100 * wait_ms / l
 if (sample_percent != 0 && (static_cast<uint32_t>(rand() % 100) < sample_percent)) { … LogContentionEvent(…) }
 ```
 
-Field order (`monitor_android.cc:35-108`, tag `20003` at `:31`):
+Field order (declared in the platform's event-log tag file, which **no bugreport contains** —
+see the `evidence_gaps` entry for this channel):
 
 ```
 1 process_name  2 is_sensitive  3 thread_name  4 wait_ms
@@ -4049,28 +4252,28 @@ Field order (`monitor_android.cc:35-108`, tag `20003` at `:31`):
 8 owner_file    9 owner_line    10 owner_method  11 sample_percent
 ```
 
-Archive line 53975, verbatim and complete:
+A representative line, verbatim and complete:
 
 ```
-09-24 00:27:01.455  1000   683   683 I dvm_lock_sample: [system_server,1,main,497,AudioManager.java,7748,int android.media.AudioManager.updateAudioPortCache(…),-,7831,int android.media.AudioManager.updateAudioPortCache(…),99]
+09-24 <HH:MM:SS.mmm>  <uid>   <pid>   <tid> I dvm_lock_sample: [<process>,<is_sensitive>,<thread>,<wait_ms>,<waiter_file>,<waiter_line>,<waiter_method>,<owner_file>,<owner_line>,<owner_method>,<sample_percent>]
 ```
 
-⇒ `wait_ms = 497`, `sample_percent = 99`, `owner_file = "-"` (the "same file, save log space"
-shorthand, `monitor_android.cc:88-93`).
+⇒ `wait_ms`, `sample_percent`, and an `owner_file` of `-`, which is a "same file as the
+waiter, save log space" shorthand (`monitor_android.cc:88-93`).
 
-Measured: **168** lines, of which **149** name `system_server` → **88.69 %**.
-
-> **The count is not a count.** A 497 ms wait logged with `sample_percent 99` means the true
-> contention count is ≈ 168/0.99 ≈ 170 — but a 100 ms wait at the default threshold logs ~10 %
-> of the time, so the *distribution* of unseen short waits is unbounded. **The schema records
-> `sampled_event_count` and the observed `sample_percent` values, never a bare
-> `contention_count`**, and `counting_caveat` is mandatory prose to that effect.
+> **The count is not a count.** A wait logged with a high `sample_percent` implies roughly
+> `lines / sample_percent` true events for waits of that length — but a *short* wait at the
+> configured threshold logs only a small fraction of the time, so the *distribution* of unseen
+> short waits is unbounded. **The schema records `sampled_event_count` and the observed
+> `sample_percent` values, never a bare `contention_count`**, and `counting_caveat` is
+> mandatory prose to that effect.
 
 `lock_profiling_threshold_` comes from `Opt::LockProfThreshold`
 (`art/runtime/runtime.cc:1589`; `runtime_options.def:123`) and is **zero on user builds** — in
 which case `log_contention` is `false` and the whole branch is skipped (`monitor.cc:458`).
 
-**C12 — ART runtime mutex.** `Mutex::DumpStack` (`art/runtime/base/mutex.cc:567-571`) is
+**ART runtime mutex — the rate-limited channel.** `Mutex::DumpStack`
+(`art/runtime/base/mutex.cc:567-571`) is
 enabled (`mutex.cc:533` called from `:481-499`) but produced **zero** events: no event satisfied
 the 50 ms × `try_times` rate limit (`kIntervalMillis = 50`, `:42`; `IsDumpFrequent()` `:576-591`).
 **Presence-with-zero is a result, not an absence**, and `zero_reason` states it.
@@ -4144,19 +4347,21 @@ Condensed. The owning file's exhaustive row-level table is preserved at
 | Field | Type | Required | Meaning | Evidence |
 | --- | --- | --- | --- | --- |
 | `sources[]` | array of object | yes | `{source: bugreport_header \| uptime_section \| dumpsys_cpuinfo, load_1m, load_5m, load_15m, uptime_ms_at_read, uptime_qualifier, line_start}`. **All three readouts are published, because on this archive they disagree.** | `ProcessCpuTracker.java:829-838`; `dumpstate.cpp:1687` |
-| `uptime_ms_at_read` | integer \| null | yes | **Required whenever `load_1m` is present.** | header / `uptime` output |
-| `online_cpus` | integer \| null | yes | Load is normalised by runnable CPUs, so 10.42 on 4 CPUs is 261 % runnable demand. | `ProcessCpuTracker.java:139-144` |
-| `boot_in_progress` | boolean | yes | **Computed**: `uptime_ms_at_read < 15 * load_15m * 1000`. | derived |
-| `interpretation` | string | yes | **Mandatory prose when `boot_in_progress` is true.** | derived |
+| `load.uptime_ms_at_read` | integer \| null | yes | **Required whenever `load_1m` is present.** | header / `uptime` output |
+| `online_cpus` | integer \| null | yes | Load is normalised by runnable CPUs, so a 1-minute average of 10.42 on 4 CPUs is 261 % runnable demand. | `ProcessCpuTracker.java:139-144` |
+| `load_15m_implies_uptime_ms` | number \| null | yes | `load_15m × 15 × 1000` — the amount of history the 15-minute average implies it has seen. **Published so the contradiction is visible, not resolved.** | derived |
+| `load_history_conflict` | boolean | yes | `true` when `load_15m_implies_uptime_ms` exceeds `uptime_ms_at_read`. **`uptime_ms_at_read` is `null` in the reference archive** — the header prints uptime only to minute granularity — so the comparison the boolean depends on is not available there; the value is then `null` and the conflict is recorded as an `evidence_gaps[]` entry with `reason: UNVERIFIABLE` rather than guessed. | derived |
 | `provenance` | object | yes | | — |
 
 > **Why `uptime_ms_at_read` is required.** Load averages are EWMAs decayed by the kernel's
-> `LOAD_FREQ`. On a device with 30 s of uptime the 1-minute average has only ever seen boot
-> work, so it is arithmetically meaningless as a load signal. On this archive the header says
-> uptime `< 1 minute` while `load_15m = 0.78` implies 0.78 × 900 = **702 s** of history — a
-> contradiction explicable only because `/proc/loadavg` is not reset on the first userspace
-> processes, or because the 15-minute EWMA is seeded from the previous boot. Either way the
-> number cannot be a steady-state load.
+> `LOAD_FREQ`. On a device with seconds of uptime the 1-minute average has only ever seen boot
+> work, so it is arithmetically meaningless as a load signal. The reference archive is exactly
+> that case, and it is *contradictory* in a second way: the header reports sub-minute uptime
+> while `load_15m` implies roughly 700 s of history, which cannot exist on a boot that young.
+> Nothing in the archive adjudicates why — see the `AMBIGUOUS_SOURCE` entry for
+> `load.load_15m_implies_uptime_ms`. Either way the number cannot be a steady-state load, which
+> is why this schema publishes the conflict (`load_history_conflict`) instead of a boolean
+> verdict about it.
 
 ##### `stall_signals`, `graphics`, `power_history`
 
@@ -4171,29 +4376,30 @@ Condensed. The owning file's exhaustive row-level table is preserved at
 | `power_history` | `batterystats_reset_time` / `batterystats_duration_s` / `powerstats_earliest_data_time` | string / integer | yes | | `dumpstate.cpp:2130,2134` |
 | | `quarantine_reason` | string | yes | **These sections describe a *previous boot*.** They are stored here and **never** joined to `utilization` or to any uptime-derived field. `powerstats` reports `Earliest data time : Wed May 20 02:34:12 GMT+07:00 2026`; batterystats resets at `2026-05-19-00-16-18`. | derived |
 
-#### The `61% TOTAL` and `400%cpu` disagreement — correctly
+#### The two aggregate CPU rows disagree — correctly
 
-| Line | Source | Value |
-| --- | --- | --- |
-| 3709 | `dumpsys cpuinfo` (`ProcessCpuTracker.java:890-892` denominator, `:914` the `TOTAL` row) | `61% TOTAL: 9.2% user + 17% kernel + 8.3% iowait + 25% irq + 1% softirq` |
-| 57472 | `top` (`dumpstate.cpp:1690`) | `400%cpu  81%user  12%nice 126%sys  88%idle  12%iow  69%irq  12%sirq   0%host` |
+Two channels, two aggregate rows, and they disagree. That disagreement is correct:
 
-Both are correct over **different windows** (1.772 s at 00:26:57 versus `top`'s own sample) and
-against **different denominators** (`cpuinfo` divides by a time span in which the device can be
-partly idle; `top` normalises to 400 % = 4 online cores).
+| Source | Normalisation |
+| --- | --- |
+| `dumpsys cpuinfo` `TOTAL` row | divided by a time span in which the device may be partly idle |
+| `top` aggregate row | normalised across **all** online cores (`400%cpu` on a 4-core device) |
 
-Note also that the earlier reading of "9.2 user / 17k nice" was a **misreading**: the archive says
-**`17% kernel`**, not nice — nice is `12%` in the `top` line. **A schema that merges these two
-lines into one "CPU %" is unsound**, so the schema keeps them as two entries of the `utilization`
-array, each with its own window.
+Both are correct over **different windows** (cpuinfo's is a short background sample taken
+before the dump; `top`'s is its own mid-dump sample) and against **different denominators**.
+Note also that the earlier reading of "9.2 user / 17k nice" was a **misreading**: the archive
+says **`17% kernel`**, not nice — nice is the `12%` in the `top` line. **A schema that merges
+these two rows into one "CPU %" is unsound**, so the schema keeps them as two entries of the
+`utilization` array, each with its own window.
 
-**On the 25 % `irq`.** `stealTimeMillis = 0` on all four cores and `0%host` in `top` mean the
-guest was **not** descheduled by the hypervisor. Combined with the product being an emulator
-(`ro.ranchu`, fingerprint `…/emulator_car64_arm64`), the 25 % `irq` in the `cpuinfo` window is
-best explained as **host→guest virtio device interrupt injection being accounted in the guest's
-`irq` bucket, not by a guest driver defect**. **This is a labelled inference, not a schema
-field** — the schema carries only the measured `irq` and `steal`. A finding may carry
-`inference: true` and the supporting observations.
+**On the high `irq`.** `stealTimeMillis = 0` on every core and `0%host` in `top` mean the guest
+was **not** descheduled by the hypervisor. Combined with the product being an emulator
+(`ro.ranchu`, and a fingerprint segment naming an emulator), the elevated `irq` in the
+`cpuinfo` window is best explained as **host→guest device interrupt injection being accounted
+in the guest's `irq` bucket, not by a guest driver defect**. **This is a labelled inference, not
+a schema field** — the schema carries only the measured `irq` and `steal`. A finding may carry
+`inference: true` and the supporting observations, and must then carry
+`confidence: "inferred"`.
 
 #### Worked example
 
@@ -4206,393 +4412,410 @@ field** — the schema carries only the measured `irq` and `steal`. A finding ma
   "collection": {
     "cpu_clean_channels": ["dumpsys_cpuinfo"],
     "cpu_perturbed_channels": ["top", "iotop", "dumpsys_meminfo", "bugreport_procdump"],
-    "mechanism": "cpuinfo is DUMP_FLAG_PRIORITY_CRITICAL (AppProfiler.java:2348) and meminfo is DUMP_FLAG_PRIORITY_HIGH (ActivityManagerService.java:1929-1930); dumpstate walks them in priority order (dumpstate.cpp:1262-1310), so the CPU service is dumped FIRST (archive line 3681, inside the block opening at line 47) and the memory service 19 s later (archive line 319846). On top of that, cpuinfo's numbers are not taken during the dump at all - they are the last two samples of a background thread that refreshes at most every 5 s (AppProfiler.java:142, 2156-2159). CPU is therefore measured BEFORE collection; memory is measured INSIDE it.",
-    "page_scanning_total_ms": 8712
+    "page_scanning_sections": [
+      { "name": "<section_title>", "line_start": <line>, "line_end": <line>, "duration_ms": <ms>,
+        "pages_scanned_per_pid_row": true },
+      { "name": "<section_title>", "line_start": <line>, "line_end": <line>, "duration_ms": <ms>,
+        "pages_scanned_per_pid_row": true }
+    ],
+    "page_scanning_total_ms": <page_scanning_total_ms>
   },
 
   "utilization": [
-    { "channel": "dumpsys_cpuinfo", "line_start": 3709,
-      "window": { "start_utc": "2026-09-24T00:26:56.813+07:00",
-                  "end_utc": "2026-09-24T00:26:58.585+07:00", "duration_ms": 1772 },
+    { "channel": "dumpsys_cpuinfo", "line_start": <line>,
+      "window": { "start_utc": "<captured_at>", "end_utc": "<captured_at>", "duration_ms": <ms> },
       "window_source": "section_body",
-      "age_at_print_ms": { "start": 22612, "end": 20840 },
-      "pct_awake": null,
-      "total_pct": 61, "pct_user": 9.2, "pct_kernel": 17, "pct_iowait": 8.3,
-      "pct_irq": 25, "pct_softirq": 1,
+      "age_at_print_ms": { "start": <ms>, "end": <ms> },
+      "total_pct": <pct>, "pct_user": <pct>, "pct_kernel": <pct>, "pct_iowait": <pct>,
+      "pct_irq": <pct>, "pct_softirq": <pct>,
       "pct_nice": null, "pct_steal": null,
-      "online_cpus": 4,
+      "online_cpus": <n>,
       "null_reasons": {
-        "pct_nice": "SYSTEM_CPU_FORMAT (ProcessCpuTracker.java:126-134) stops at softirq",
-        "pct_steal": "same; steal is only readable per-CPU via cpu_monitor (CpuInfoReader.java:69)"
+        "pct_nice": "the aggregate cpu row this channel prints has no nice bucket; the ratio is structurally unavailable from these bytes",
+        "pct_steal": "same; steal is only readable per-CPU via the cpu_monitor channel, never in this aggregate row"
       },
-      "provenance": { "evidence_origin": "dumpsys_cpuinfo", "section_title": "DUMPSYS CRITICAL",
-        "section_ordinal": 0, "line_start": 3681, "line_end": 3710,
-        "captured_at": "2026-09-24T00:26:58.585+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-        "age_seconds_at_capture": 18.415, "capture_kind": "background_sampler",
+      "provenance": { "evidence_origin": "dumpsys_cpuinfo", "section_title": "<section_title>",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+        "age_seconds_at_capture": <age>, "capture_kind": "background_sampler",
         "freshness": "in_window",
-        "freshness_basis": { "input": "ProcessCpuTracker.java:860-872 window header",
-          "basis": "the sample window ended 18.415 s BEFORE dumpstate started (00:27:17), so it cannot include collection cost; it is also inside capture.log_window",
+        "freshness_basis": { "input": "the window header this section prints",
+          "basis": "the sample window closed before dumpstate started and also falls inside capture.log_window, so it cannot include collection cost",
           "threshold_seconds": 3600 },
         "collector_perturbed": false,
-        "collector_perturbed_basis": "sample window ended 18.415 s before dumpstate started; cannot include collection cost" } },
+        "collector_perturbed_basis": "section_measured_before_dump" } },
 
-    { "channel": "top", "line_start": 57472,
+    { "channel": "top", "line_start": <line>,
       "window": { "start_utc": null, "end_utc": null, "duration_ms": null },
       "window_source": "unknown",
       "total_pct": null,
-      "pct_user": 81, "pct_nice": 12, "pct_kernel": 126, "pct_iowait": 12,
-      "pct_irq": 69, "pct_softirq": 12, "pct_steal": 0,
-      "online_cpus": 4,
-      "threads_total": 2769, "running": 19, "sleeping": 2750, "stopped": 0, "zombie": 0,
+      "pct_user": <pct>, "pct_nice": <pct>, "pct_kernel": <pct>, "pct_iowait": <pct>,
+      "pct_irq": <pct>, "pct_softirq": <pct>, "pct_steal": <pct>,
+      "online_cpus": <n>,
+      "threads_total": <n>, "running": <n>, "sleeping": <n>, "stopped": <n>, "zombie": <n>,
       "null_reasons": {
-        "total_pct": "top's aggregate row is normalised to 400% across 4 cores; it is not a 0-100 'busy' figure",
-        "window": "top is not in this source drop; its sampling window is not verifiable",
-        "pct_steal": "read as '0%host' from the output header; the column's semantics are unverified"
+        "total_pct": "the aggregate row is normalised across all online cores, so it is not a 0-100 busy figure and cannot be compared with the other channel",
+        "window": "this channel prints no window header, so its sampling interval is not derivable from the bytes"
       },
       "semantics_verified": false,
-      "provenance": { "evidence_origin": "cpu_info_top", "section_title": "CPU INFO", "section_ordinal": 0,
-        "line_start": 57464, "line_end": 57480,
+      "provenance": { "evidence_origin": "top", "section_title": "CPU INFO", "section_ordinal": 0,
+        "line_start": <line>, "line_end": <line>,
         "captured_at": null, "captured_at_time_base": "undetermined",
         "age_seconds_at_capture": null, "capture_kind": "command_output", "freshness": "undated",
         "freshness_basis": { "input": "none",
-          "basis": "top prints no clock; positioned only by dump statement order (dumpstate.cpp:1690)",
+          "basis": "the reading carries no printed clock; positioned only by its line_start within the archive",
           "threshold_seconds": 3600 },
         "collector_perturbed": true,
-        "collector_perturbed_basis": "mid-dump; its own 'Swap:' line already shows the collector's effect (18176K used vs 18688K at the immediately preceding /proc/meminfo read); source binary not present in the AOSP drop, so its columns are unverified" } }
+        "collector_perturbed_basis": "section_measured_during_dump" } }
   ],
 
   "per_cpu_core": [
-    { "core_id": 0, "is_online": true, "user_time_ms": 340, "nice_time_ms": 30,
-      "system_time_ms": 5040, "idle_time_ms": 2510, "iowait_time_ms": 490,
-      "irq_time_ms": 2370, "softirq_time_ms": 260, "steal_time_ms": 0,
-      "guest_time_ms": 0, "guest_nice_time_ms": 0, "busy_pct_since_boot": 0.7726,
-      "read_at_uptime_ms": 11192 },
-    { "core_id": 1, "is_online": true, "user_time_ms": 460, "nice_time_ms": 20,
-      "system_time_ms": 1190, "idle_time_ms": 7450, "iowait_time_ms": 820,
-      "irq_time_ms": 1020, "softirq_time_ms": 20, "steal_time_ms": 0,
-      "guest_time_ms": 0, "guest_nice_time_ms": 0, "busy_pct_since_boot": 0.3215,
-      "read_at_uptime_ms": 11192 },
-    { "core_id": 2, "is_online": true, "user_time_ms": 440, "nice_time_ms": 30,
-      "system_time_ms": 1320, "idle_time_ms": 7170, "iowait_time_ms": 1010,
-      "irq_time_ms": 960, "softirq_time_ms": 20, "steal_time_ms": 0,
-      "guest_time_ms": 0, "guest_nice_time_ms": 0, "busy_pct_since_boot": 0.3452,
-      "read_at_uptime_ms": 11192 },
-    { "core_id": 3, "is_online": true, "user_time_ms": 580, "nice_time_ms": 10,
-      "system_time_ms": 1310, "idle_time_ms": 7000, "iowait_time_ms": 980,
-      "irq_time_ms": 970, "softirq_time_ms": 20, "steal_time_ms": 0,
-      "guest_time_ms": 0, "guest_nice_time_ms": 0, "busy_pct_since_boot": 0.3560,
-      "read_at_uptime_ms": 11192 }
+    { "core_id": <n>, "is_online": true, "user_time_ms": <ms>, "nice_time_ms": <ms>,
+      "system_time_ms": <ms>, "idle_time_ms": <ms>, "iowait_time_ms": <ms>,
+      "irq_time_ms": <ms>, "softirq_time_ms": <ms>, "steal_time_ms": <ms>,
+      "guest_time_ms": <ms>, "guest_nice_time_ms": <ms>, "busy_pct_since_boot": <pct>,
+      "read_at_uptime_ms": <ms> },
+    { "core_id": <n>, "is_online": true, "user_time_ms": <ms>, "nice_time_ms": <ms>,
+      "system_time_ms": <ms>, "idle_time_ms": <ms>, "iowait_time_ms": <ms>,
+      "irq_time_ms": <ms>, "softirq_time_ms": <ms>, "steal_time_ms": <ms>,
+      "guest_time_ms": <ms>, "guest_nice_time_ms": <ms>, "busy_pct_since_boot": <pct>,
+      "read_at_uptime_ms": <ms> },
+    { "core_id": <n>, "is_online": true, "user_time_ms": <ms>, "nice_time_ms": <ms>,
+      "system_time_ms": <ms>, "idle_time_ms": <ms>, "iowait_time_ms": <ms>,
+      "irq_time_ms": <ms>, "softirq_time_ms": <ms>, "steal_time_ms": <ms>,
+      "guest_time_ms": <ms>, "guest_nice_time_ms": <ms>, "busy_pct_since_boot": <pct>,
+      "read_at_uptime_ms": <ms> },
+    { "core_id": <n>, "is_online": true, "user_time_ms": <ms>, "nice_time_ms": <ms>,
+      "system_time_ms": <ms>, "idle_time_ms": <ms>, "iowait_time_ms": <ms>,
+      "irq_time_ms": <ms>, "softirq_time_ms": <ms>, "steal_time_ms": <ms>,
+      "guest_time_ms": <ms>, "guest_nice_time_ms": <ms>, "busy_pct_since_boot": <pct>,
+      "read_at_uptime_ms": <ms> }
   ],
 
   "processes": [
-    { "pid": 683, "label": "system_server", "pct_total": 35, "pct_user": 25, "pct_kernel": 10,
-      "minor_faults": 17362, "major_faults": 11, "is_thread_row": false,
-      "window_ref": "utilization[0].window" },
-    { "pid": 494, "label": "logcat", "pct_total": 15, "pct_user": 0, "pct_kernel": 15,
-      "is_thread_row": false, "window_ref": "utilization[0].window" },
-    { "pid": 564, "label": "bootanimation", "pct_total": 11, "pct_user": 3.3, "pct_kernel": 7.9,
-      "minor_faults": 8623, "is_thread_row": false, "window_ref": "utilization[0].window" },
-    { "pid": 416, "label": "android.hardware.graphics.composer3-service.ranchu",
-      "pct_total": 6.2, "minor_faults": 3, "is_thread_row": false, "window_ref": "utilization[0].window" },
-    { "pid": 55, "label": "kworker/u9:0-fscrypt_read_queue", "pct_total": 1.1,
-      "is_thread_row": true, "window_ref": "utilization[0].window" }
+    { "pid": <pid>, "label": "<process_name>", "pct_total": <pct>, "pct_user": <pct>, "pct_kernel": <pct>,
+      "minor_faults": <n>, "major_faults": <n>, "is_thread_row": false,
+      "window_ref": "<utilization[].window_ref>" },
+    { "pid": <pid>, "label": "<process_name>", "pct_total": <pct>, "pct_user": <pct>, "pct_kernel": <pct>,
+      "is_thread_row": false, "window_ref": "<utilization[].window_ref>" },
+    { "pid": <pid>, "label": "<process_name>", "pct_total": <pct>, "pct_user": <pct>, "pct_kernel": <pct>,
+      "minor_faults": <n>, "is_thread_row": false, "window_ref": "<utilization[].window_ref>" },
+    { "pid": <pid>, "label": "<process_name>",
+      "pct_total": <pct>, "minor_faults": <n>, "is_thread_row": false, "window_ref": "<utilization[].window_ref>" },
+    { "pid": <pid>, "label": "<thread_name>", "pct_total": <pct>,
+      "is_thread_row": true, "window_ref": "<utilization[].window_ref>" }
   ],
 
   "contention": {
     "art_java_monitor": {
-      "event_count": 33,
+      "event_count": <n>,
       "channel_present": true,
-      "threshold_ms": 1000,
-      "threshold_derivation": "kLongWaitMs = 100 * kDebugThresholdFudgeFactor; kDebugThresholdFudgeFactor = kIsDebugBuild ? 10 : 1 (art/runtime/monitor.cc:53-54). This is a userdebug build, so 100 * 10 = 1000. A 200 ms stall produces no line here and its absence is NOT evidence of health.",
-      "wait_ms_max": 1780, "wait_ms_min": 105,
-      "events_over_threshold_1s": 6,
-      "events_in_system_server": 0,
-      "events_over_threshold_1s_in_system_server": 0,
+      "threshold_ms": <ms>,
+      "threshold_derivation": "the reporting floor is a platform constant scaled by a build-variant factor. On this build the floor is high enough that a stall well below it emits no line at all, so the absence of short stalls is NOT evidence of health. The exact figure must be read from the build configuration, not assumed.",
+      "wait_ms_max": <ms>, "wait_ms_min": <ms>,
+      "events_over_threshold_1s": <n>,
+      "events_in_system_server": <n>,
+      "events_over_threshold_1s_in_system_server": <n>,
       "events": [
-        { "timestamp_utc": "2026-09-24T00:27:16.117+07:00", "process": "com.google.android.gms",
-          "pid": 2488, "tid": 2957, "owner_name": "axte.h", "owner_tid": 0,
-          "owner_method": "axte.h(java.lang.String)",
-          "owner_file": "com.google.android.gms@254232109@25.42.32", "owner_line": 28,
-          "waiters": 0, "waiter_method": "axte.d(java.lang.String)",
-          "wait_ms": 1780, "wait_verbatim": "1.780s" },
-        { "timestamp_utc": "2026-09-24T00:27:16.117+07:00", "process": "com.google.android.gms",
-          "pid": 2488, "tid": 2819, "owner_method": "axte.h(java.lang.String)",
-          "owner_line": 28, "waiters": 1, "wait_ms": 1629, "wait_verbatim": "1.629s" },
-        { "timestamp_utc": "2026-09-24T00:27:16.123+07:00", "process": "com.google.android.gms",
-          "pid": 2488, "tid": 2899, "owner_method": "axte.h(java.lang.String)",
-          "owner_line": 28, "waiters": 2, "wait_ms": 1628, "wait_verbatim": "1.628s" },
-        { "timestamp_utc": "2026-09-24T00:27:20.176+07:00", "process": "com.google.android.gms.persistent",
-          "pid": 2433, "tid": 2696, "owner_line": 185, "waiters": 0,
-          "wait_ms": 1396, "wait_verbatim": "1.396s" }
+        { "timestamp_utc": "<captured_at>", "process": "<process_name>",
+          "pid": <pid>, "tid": <tid>, "owner_name": "<owner_name>", "owner_tid": <tid>,
+          "owner_method": "<owner_method>(<signature>)",
+          "owner_file": "<owner_file>", "owner_line": <n>,
+          "waiters": <n>, "waiter_method": "<waiter_method>(<signature>)",
+          "wait_ms": <ms>, "wait_verbatim": "<wait, verbatim as ART chose to print it>" },
+        { "timestamp_utc": "<captured_at>", "process": "<process_name>",
+          "pid": <pid>, "tid": <tid>, "owner_method": "<owner_method>(<signature>)",
+          "owner_line": <n>, "waiters": <n>, "wait_ms": <ms>, "wait_verbatim": "<wait, verbatim>" },
+        { "timestamp_utc": "<captured_at>", "process": "<process_name>",
+          "pid": <pid>, "tid": <tid>, "owner_method": "<owner_method>(<signature>)",
+          "owner_line": <n>, "waiters": <n>, "wait_ms": <ms>, "wait_verbatim": "<wait, verbatim>" },
+        { "timestamp_utc": "<captured_at>", "process": "<process_name>",
+          "pid": <pid>, "tid": <tid>, "owner_line": <n>, "waiters": <n>,
+          "wait_ms": <ms>, "wait_verbatim": "<wait, verbatim>" }
       ],
-      "events_truncated_in_example": 29
+      "events_truncated_in_example": <n>
     },
     "art_runtime_mutex": {
       "channel_present": true, "event_count": 0,
-      "format": "Monitor contention with tid <owner_tid>, wait time: <ms>ms, monitor id: <monitor_id>",
-      "short_format": "Contention with tid <owner_tid>, monitor id <monitor_id>",
-      "zero_reason": "channel enabled (art/runtime/base/mutex.cc:533 called from :481-499) but no event satisfied the 50ms * try_times rate limit (:576-591) during the log window. Presence-with-zero is a result, not an absence."
+      "format": "<the channel's full line format, as documented above>",
+      "short_format": "<the channel's abbreviated line format>",
+      "zero_reason": "the channel is enabled and was searched, but no event satisfied its rate limit during the log window. Presence-with-zero is a result, not an absence."
     },
     "art_rate_limiting": {
       "java_monitor_is_sampled": true,
-      "java_monitor_sampling_rule": "sample_percent = 100 * wait_ms / lock_profiling_threshold_, emitted when rand()%100 < sample_percent (art/runtime/monitor.cc:529-536)",
-      "java_monitor_sample_pct_observed": [99],
-      "java_monitor_threshold_source": "Opt::LockProfThreshold (art/runtime/runtime.cc:1589; runtime_options.def:123)",
+      "java_monitor_sampling_rule": "the emission probability is proportional to how far the wait exceeded the configured threshold, so a short wait is logged far less often than a long one",
+      "java_monitor_sample_pct_observed": [<n>],
+      "java_monitor_threshold_source": "a platform build option; not readable from a bugreport, so threshold_ms above must be published with threshold_derivation",
       "runtime_mutex_is_rate_limited": true,
-      "runtime_mutex_rate_limit": "kIntervalMillis = 50 (art/runtime/base/mutex.cc:42), skipped when interval < 50 * try_times (:576-591)",
-      "counting_caveat": "168 dvm_lock_sample events and 33 Long monitor contention events are NOT contention counts. The first is a probability sample whose rate depends on each wait's own duration (a 497 ms wait at sample_percent 99 implies ~170 true events, but a 100 ms wait at the default threshold logs ~10% of the time, so the distribution of unseen short waits is unbounded). The second has a 1000 ms reporting floor on a debuggable build. Short waits below the floor are unobservable."
+      "runtime_mutex_rate_limit": "a fixed minimum interval between emitted events, scaled by a per-monitor attempt counter",
+      "counting_caveat": "no field in contention is a contention count. The sampled channel's true population is unbounded below because sampling probability varies per wait duration, and the Java-monitor channel has a reporting floor above which shorter waits are unobservable. The published event_count is a count of lines, never of stalls."
     },
     "dvm_lock_sample": {
-      "sampled_event_count": 168, "in_system_server": 149, "system_server_pct": 0.8869,
-      "field_order_source": "art/runtime/monitor_android.cc:35-108, tag 20003 at :31",
-      "example": { "timestamp_utc": "2026-09-24T00:27:01.455+07:00", "pid": 683, "tid": 683,
-        "process_name": "system_server", "is_sensitive_thread": 1, "thread_name": "main",
-        "wait_ms": 497, "waiter_file": "AudioManager.java", "waiter_line": 7748,
-        "waiter_method": "int android.media.AudioManager.updateAudioPortCache(java.util.ArrayList, java.util.ArrayList, java.util.ArrayList)",
-        "owner_file": "-", "owner_line": 7831,
-        "owner_method": "int android.media.AudioManager.updateAudioPortCache(java.util.ArrayList, java.util.ArrayList, java.util.ArrayList)",
-        "sample_percent": 99,
-        "owner_file_note": "'-' means owner_file == waiter_file (space optimisation, monitor_android.cc:88-93)" }
+      "sampled_event_count": <n>, "in_system_server": <n>, "system_server_pct": <pct>,
+      "field_order_source": "the positional layout this artifact assumes; it is declared in the platform's event-log tag file, which no bugreport contains, so each entry is also published in decomposed form",
+      "example": { "timestamp_utc": "<captured_at>", "pid": <pid>, "tid": <tid>,
+        "process_name": "<process_name>", "is_sensitive_thread": <n>, "thread_name": "<thread_name>",
+        "wait_ms": <ms>, "waiter_file": "<File>", "waiter_line": <n>,
+        "waiter_method": "<return type> <class>.<method>(<arg types>)",
+        "owner_file": "-", "owner_line": <n>,
+        "owner_method": "<return type> <class>.<method>(<arg types>)",
+        "sample_percent": <n>,
+        "owner_file_note": "an owner_file of '-' is a space optimisation meaning owner_file == waiter_file" }
     },
     "provenance": { "evidence_origin": "art_monitor_contention", "archive_path": "<main_entry>",
-      "section_title": "SYSTEM LOG", "section_ordinal": 0, "line_start": 27041, "line_end": 53823,
-      "captured_at": "2026-09-24T00:27:16.117+07:00", "captured_at_time_base": "logcat_line",
-      "age_seconds_at_capture": 0.883, "capture_kind": "live_log", "freshness": "in_window",
+      "section_title": "SYSTEM LOG", "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+      "captured_at": "<captured_at>", "captured_at_time_base": "logcat_line",
+      "age_seconds_at_capture": <age>, "capture_kind": "live_log", "freshness": "in_window",
       "freshness_basis": { "input": "logcat line stamp",
         "basis": "contention events are logged as they occur, inside capture.log_window",
         "threshold_seconds": 3600 },
       "collector_perturbed": false,
-      "collector_perturbed_basis": "the dump neither causes nor suppresses contention events" }
+      "collector_perturbed_basis": "live_log_capture" }
   },
 
   "load": {
     "sources": [
-      { "source": "bugreport_header", "load_1m": 10.42, "load_5m": 2.38, "load_15m": 0.78,
-        "uptime_ms_at_read": null, "uptime_qualifier": "up 0 weeks, 0 days, 0 hours, 0 minutes",
-        "line_start": 43 },
-      { "source": "uptime_section", "load_1m": 9.66, "load_5m": 2.36, "load_15m": 0.79,
-        "uptime_qualifier": "up 0 min", "captured_at": "2026-09-24T00:27:25+07:00", "line_start": 57013 },
-      { "source": "dumpsys_cpuinfo", "load_1m": 0.39, "load_5m": 0.08, "load_15m": 0.03, "line_start": 3685 }
+      { "source": "bugreport_header", "load_1m": <n>, "load_5m": <n>, "load_15m": <n>,
+        "uptime_ms_at_read": null, "uptime_qualifier": "<uptime as printed in the header>",
+        "line_start": <line> },
+      { "source": "uptime_section", "load_1m": <n>, "load_5m": <n>, "load_15m": <n>,
+        "uptime_qualifier": "<uptime as printed>", "captured_at": "<captured_at>", "line_start": <line> },
+      { "source": "dumpsys_cpuinfo", "load_1m": <n>, "load_5m": <n>, "load_15m": <n>, "line_start": <line> }
     ],
-    "online_cpus": 4,
-    "boot_in_progress": true,
-    "interpretation": "All three readouts disagree because they are at different instants of a sub-minute boot. 10.42 on 4 CPUs is 261% runnable demand during initial userspace start; the cpuinfo sample (00:26:58, load 0.39) predates the burst that produced it. A load_15m of 0.78 implies ~702 s of history, which cannot exist on a boot this young, so the kernel EWMA is seeded rather than measured. load_1m MUST NOT be reported without uptime_ms_at_read.",
-    "provenance": { "evidence_origin": "loadavg", "captured_at": "2026-09-24T00:26:58+07:00",
-      "captured_at_time_base": "dumpsys_section_snapshot", "age_seconds_at_capture": 19,
+    "online_cpus": <n>,
+    "uptime_ms_at_read": <ms>,
+    "load_15m_implies_uptime_ms": <ms>,
+    "load_history_conflict": true,
+    "provenance": { "evidence_origin": "loadavg", "captured_at": "<captured_at>",
+      "captured_at_time_base": "dumpsys_section_snapshot", "age_seconds_at_capture": <age>,
       "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
       "freshness_basis": { "input": "section body",
-        "basis": "a kernel EWMA reading, not a dump-scanned value", "threshold_seconds": 3600 },
-      "collector_perturbed": false, "collector_perturbed_basis": "kernel EWMA" }
+        "basis": "a kernel exponentially-weighted average, not a dump-scanned value",
+        "threshold_seconds": 3600 },
+      "collector_perturbed": false, "collector_perturbed_basis": "live_log_capture" }
   },
 
   "stall_signals": {
-    "psi_cpu": { "some": { "avg10": 65.00, "avg60": 25.63, "avg300": 6.26, "total_us": 19879787 },
-                 "full": { "avg10": 0.00, "avg60": 0.00, "avg300": 0.00, "total_us": 0 } },
-    "psi_io":  { "some": { "avg10": 12.36, "avg60": 5.82, "avg300": 1.50, "total_us": 4881350 },
-                 "full": { "avg10": 2.84, "avg60": 1.82, "avg300": 0.50, "total_us": 1794988 } },
-    "iotop": { "window_ms": 1000, "row_granularity": "thread", "sort_column": "total",
-      "max_io_delay_pct": 0.00, "max_swap_delay_pct": 0.00,
-      "max_sched_delay_pct": 24.65, "max_mem_delay_pct": 0.00,
-      "resolution_floor_note": "0.00% means <0.1 ms/thread over 1 s (iotop.cpp:36-39 printed as %5.2f%%, :255-265), not zero I/O; the same table shows 4904 KiB/s read",
+    "psi_cpu": { "some": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> },
+                 "full": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> } },
+    "psi_io":  { "some": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> },
+                 "full": { "avg10": <pct>, "avg60": <pct>, "avg300": <pct>, "total_us": <us> } },
+    "iotop": { "window_ms": <ms>, "row_granularity": "thread", "sort_column": "<column>",
+      "max_io_delay_pct": <pct>, "max_swap_delay_pct": <pct>,
+      "max_sched_delay_pct": <pct>, "max_mem_delay_pct": <pct>,
+      "resolution_floor_note": "a 0.00% reading is a fixed-decimal resolution floor, not zero I/O; the same rows carry non-zero throughput",
       "provenance": { "capture_kind": "command_output", "captured_at": null, "freshness": "undated",
         "collector_perturbed": true,
-        "collector_perturbed_basis": "runs mid-dump; dumpstate and iotop threads appear in the table" } },
+        "collector_perturbed_basis": "section_measured_during_dump" } },
     "proc_churn": {
-      "am_proc_start_count": 121, "am_proc_died_count": 40, "am_proc_bound_count": 121,
-      "am_uid_running_count": 68, "am_uid_active_count": 64,
-      "window": { "start_utc": "2026-09-24T00:26:47.418+07:00", "end_utc": "2026-09-24T00:27:52.080+07:00",
-                  "duration_seconds": 64.662, "coverage_ratio": 0.314 },
+      "am_proc_start_count": <n>, "am_proc_died_count": <n>, "am_proc_bound_count": <n>,
+      "am_uid_running_count": <n>, "am_uid_active_count": <n>,
+      "window": { "start_utc": "<captured_at>", "end_utc": "<captured_at>",
+                  "duration_seconds": <seconds>, "coverage_ratio": <coverage_ratio> },
       "rate_per_s": null,
       "rate_valid": false,
-      "rate_suppressed_reason": "The EVENT LOG window is 64.662 s and its buffer covers only 20.304 s of that (coverage 0.314). A per-boot churn rate computed over a window shorter than 120 s is dominated by the single burst of zygote/ART initialisation and means nothing. 121/64.662 = 1.873/s is arithmetically correct and MUST NOT be published; rate_valid gates rate_per_s.",
-      "provenance": { "capture_kind": "live_log", "captured_at": "2026-09-24T00:26:59.872+07:00",
+      "rate_suppressed_reason": "the event-log buffer covers only a fraction of the log window, and a per-boot churn rate computed over a window this short is dominated by the initial burst of runtime startup. The arithmetic result is withheld rather than published with a caveat, because rate_valid gates rate_per_s.",
+      "provenance": { "capture_kind": "live_log", "captured_at": "<captured_at>",
         "captured_at_time_base": "logcat_line", "freshness": "in_window",
         "collector_perturbed": false,
-        "collector_perturbed_basis": "EVENT LOG captured at dumpstate.cpp:1028, before any heavy scan" } }
+        "collector_perturbed_basis": "live_log_capture" } }
   },
 
   "graphics": {
-    "device_uptime_ms_at_capture": 57918,
+    "device_uptime_ms_at_capture": <ms>,
     "per_process": [
-      { "pid": 3037, "process_name": "com.android.car.mapsplaceholder",
-        "stats_since_ns": 25682514720, "total_frames": 0, "janky_frames": 0, "janky_pct": 0.0,
-        "p50_ms": 4950, "p90_ms": 4950, "p95_ms": 4950, "p99_ms": 4950 }
+      { "pid": <pid>, "process_name": "<process_name>",
+        "stats_since_ns": <ns>, "total_frames": <n>, "janky_frames": <n>, "janky_pct": <pct>,
+        "p50_ms": <ms>, "p90_ms": <ms>, "p95_ms": <ms>, "p99_ms": <ms> }
     ],
-    "window_note": "stats_since_ns = 25.68 s of a 57.918 s-old device; zero frames rendered because the process is a placeholder with no surface. gfxinfo windows are per-process and independent of utilization[].window.",
-    "provenance": { "captured_at": "2026-09-24T00:27:25+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-      "section_duration_ms": 849, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
-      "collector_perturbed": false, "collector_perturbed_basis": "frame counters, not a memory scan" }
+    "window_note": "the per-process statistics window is independent per process and is not the same as utilization[].window; compare them only after reading stats_since_ns against device_uptime_ms_at_capture",
+    "provenance": { "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+      "section_duration_ms": <ms>, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
+      "collector_perturbed": false, "collector_perturbed_basis": "section_measured_before_dump" }
   },
 
   "power_history": {
-    "batterystats_reset_time": "2026-05-19-00-16-18",
-    "batterystats_duration_s": 1537272,
-    "batterystats_history_used_pct": 0.03,
-    "powerstats_earliest_data_time": "2026-05-20T02:34:12+07:00",
+    "batterystats_reset_time": "<YYYY-MM-DD-HH-mm-ss>",
+    "batterystats_duration_s": <seconds>,
+    "batterystats_history_used_pct": <pct>,
+    "powerstats_earliest_data_time": "<captured_at>",
     "freshness": "stale",
-    "quarantine_reason": "Battery history starts 2026-05-19 and the powerstats meter starts 2026-05-20; both precede the 2026-09-24 boot by ~3 months. These describe a previous boot and are stored only so a reader can see they exist. They MUST NOT be joined to utilization[] or to any uptime-derived field.",
-    "provenance": { "capture_kind": "persisted_aggregate", "captured_at": "2026-05-19T00:16:18+07:00",
-      "captured_at_time_base": "dumpsys_section_snapshot", "capture_kind_derivation": "ring buffer since RESET:TIME",
-      "freshness": "stale" }
+    "quarantine_reason": "battery and power history both begin before this boot. They describe a previous boot, are stored here only so a reader can see they exist, and MUST NOT be joined to utilization[] or to any uptime-derived field.",
+    "provenance": { "capture_kind": "persisted_aggregate", "captured_at": "<captured_at>",
+      "captured_at_time_base": "dumpsys_section_snapshot", "freshness": "stale" }
   },
 
   "counts": {
     "dvm_lock_sample_hits": {
       "pattern": " dvm_lock_sample:", "pattern_kind": "substring", "case_sensitive": true,
-      "raw_count": 168, "matched_evidence": 0, "suppressed_noise": 168, "not_emitted_by_platform": 0,
-      "suppressed_noise_note": "the 168 dvm_lock_sample lines are NOT contention events; they are a duration-weighted probability sample (monitor.cc:529-536) and are reported separately under contention.dvm_lock_sample as sampled_event_count",
-      "coverage": { "window_start": "2026-09-24T00:26:47.418+07:00", "window_end": "2026-09-24T00:27:52.080+07:00",
+      "raw_count": <n>, "matched_evidence": 0, "suppressed_noise": <n>, "not_emitted_by_platform": 0,
+      "suppressed_noise_note": "these lines are NOT contention counts. They are a duration-weighted probability sample and are reported separately under contention.dvm_lock_sample as sampled_event_count",
+      "coverage": { "window_start": "<captured_at>", "window_end": "<captured_at>",
                     "archive_window": "capture.log_window", "coverage_ratio": 1.0 },
       "regions": [ { "archive_path": "<main_entry>", "section_title": "SYSTEM LOG", "section_ordinal": 0,
-                     "line_start": 53824, "line_end": 55656, "line_count": 168 } ]
+                     "line_start": <line>, "line_end": <line>, "line_count": <n> } ]
     },
     "long_monitor_contention_hits": {
       "pattern": "Long monitor contention", "pattern_kind": "substring", "case_sensitive": false,
-      "raw_count": 33, "matched_evidence": 33, "suppressed_noise": 0, "not_emitted_by_platform": 0,
-      "coverage": { "window_start": "2026-09-24T00:26:47.418+07:00", "window_end": "2026-09-24T00:27:52.080+07:00",
+      "raw_count": <n>, "matched_evidence": <n>, "suppressed_noise": 0, "not_emitted_by_platform": 0,
+      "coverage": { "window_start": "<captured_at>", "window_end": "<captured_at>",
                     "archive_window": "capture.log_window", "coverage_ratio": 1.0 },
       "regions": [ { "archive_path": "<main_entry>", "section_title": "SYSTEM LOG", "section_ordinal": 0,
-                     "line_start": 27041, "line_end": 53823, "line_count": 33 } ]
+                     "line_start": <line>, "line_end": <line>, "line_count": <n> } ]
     },
     "monitor_contention_with_tid_hits": {
       "pattern": "Monitor contention with tid", "pattern_kind": "substring", "case_sensitive": true,
       "raw_count": 0, "matched_evidence": 0, "suppressed_noise": 0, "not_emitted_by_platform": 0,
-      "suppressed_noise_note": "channel present and enabled (mutex.cc:533 from :481-499); zero events satisfied the 50ms rate limit (:576-591). Presence-with-zero is a result.",
+      "suppressed_noise_note": "the channel is present and enabled; zero events satisfied its rate limit. Presence-with-zero is a result.",
       "coverage": { "window_start": null, "window_end": null, "archive_window": "capture.log_window", "coverage_ratio": null },
       "regions": []
     },
     "held_by_thread_hits": {
       "pattern": "held by thread", "pattern_kind": "substring", "case_sensitive": true,
-      "raw_count": 1, "matched_evidence": 0, "suppressed_noise": 1, "not_emitted_by_platform": 0,
-      "suppressed_noise_note": "the single match is at archive line 310026, inside the VM TRACES AT LAST ANR section that starts at line 309986 and is 126.80 days stale. Reporting it as a live lock-contention finding is the exact false positive this schema exists to prevent.",
+      "raw_count": <n>, "matched_evidence": 0, "suppressed_noise": <n>, "not_emitted_by_platform": 0,
+      "suppressed_noise_note": "the single match falls inside an archived trace section that predates this boot by months. Reporting it as a live lock-contention finding is the exact false positive this schema exists to prevent.",
       "coverage": { "window_start": null, "window_end": null, "archive_window": "capture.log_window", "coverage_ratio": null },
-      "regions": [ { "archive_path": "<main_entry>", "section_title": "VM TRACES AT LAST ANR", "section_ordinal": 0,
-                     "line_start": 310026, "line_end": 310026, "line_count": 1 } ]
+      "regions": [ { "archive_path": "<main_entry>", "section_title": "<section_title>", "section_ordinal": 0,
+                     "line_start": <line>, "line_end": <line>, "line_count": <n> } ]
     }
   },
 
   "findings": [
     { "id": "cpu-001", "kind": "clean_window",
-      "title": "CPU utilization window 00:26:56.813-00:26:58.585 (1.772 s) ended 18.415 s before dumpstate started; 61% total is not inflated by the collection",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
       "attributes": { "channel": "dumpsys_cpuinfo", "capture_kind": "background_sampler" },
-      "metrics": { "window_duration_ms": 1772, "age_before_dump_ms": 18415,
-                   "pct_total": 61, "pct_user": 9.2, "pct_kernel": 17, "pct_iowait": 8.3,
-                   "pct_irq": 25, "pct_softirq": 1 },
+      "metrics": { "window_duration_ms": <ms>, "age_before_dump_ms": <ms>,
+                   "pct_total": <pct>, "pct_user": <pct>, "pct_kernel": <pct>, "pct_iowait": <pct>,
+                   "pct_irq": <pct>, "pct_softirq": <pct> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 3686, "line_end": 3686 },
-        "excerpt": "CPU usage from 22612ms to 20840ms ago (2026-09-24 00:26:56.813 to 2026-09-24 00:26:58.585):",
-        "excerpt_truncated": false, "excerpt_bytes": 100, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim CPU-usage window header>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
-      "provenance": { "evidence_origin": "dumpsys_cpuinfo", "section_title": "DUMPSYS CRITICAL",
-        "section_ordinal": 0, "line_start": 3681, "line_end": 3710,
-        "captured_at": "2026-09-24T00:26:58.585+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-        "age_seconds_at_capture": 18.415, "capture_kind": "background_sampler", "freshness": "in_window",
-        "freshness_basis": { "input": "window header plus the dumpsys footer",
-          "basis": "window ended 18.415 s before dumpstate started and inside capture.log_window",
+      "provenance": { "evidence_origin": "dumpsys_cpuinfo", "section_title": "<section_title>",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+        "age_seconds_at_capture": <age>, "capture_kind": "background_sampler", "freshness": "in_window",
+        "freshness_basis": { "input": "the window header plus the section footer",
+          "basis": "the window closed before dumpstate started and inside capture.log_window",
           "threshold_seconds": 3600 },
         "collector_perturbed": false,
-        "collector_perturbed_basis": "sample predates dumpstate by 18.415 s" } },
+        "collector_perturbed_basis": "section_measured_before_dump" } },
 
     { "id": "cpu-002", "kind": "host_interrupt_injection",
-      "title": "25% irq with stealTimeMillis=0 on all 4 cores and top reporting 0%host - inferred host-to-guest virtio interrupt injection",
       "severity": "info", "unconstrained_severity": "info", "confidence": "inferred",
       "inference": true,
       "process_key": null, "event_time": null,
-      "attributes": { "inference_basis": ["ro.ranchu", "fingerprint …/emulator_car64_arm64",
-                                          "stealTimeMillis=0 on cores 0-3", "top 0%host"] },
-      "metrics": { "pct_irq": 25, "steal_time_ms": 0, "cores_measured": 4 },
+      "attributes": { "inference_basis": ["ro.ranchu", "<fingerprint emulator segment>",
+                                          "steal_time_ms = 0 on every core", "top reporting 0%host"] },
+      "metrics": { "pct_irq": <pct>, "steal_time_ms": <ms>, "cores_measured": <n> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 3667, "line_end": 3670 },
-        "excerpt": "CPU core id = 0, CpuUsageStats{ userTimeMillis = 340, niceTimeMillis = 30, systemTimeMillis = 5040, idleTimeMillis = 2510, iowaitTimeMillis = 490, irqTimeMillis = 2370, softirqTimeMillis = 260, stealTimeMillis = 0, …",
-        "excerpt_truncated": true, "excerpt_bytes": 512, "excerpt_complete": false },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim per-core usage row>",
+        "excerpt_truncated": true, "excerpt_bytes": <n>, "excerpt_complete": false },
       "corroborating_evidence": [],
-      "provenance": { "evidence_origin": "dumpsys_cpu_monitor", "section_title": "DUMPSYS CRITICAL",
-        "section_ordinal": 0, "line_start": 3667, "line_end": 3670,
-        "captured_at": "2026-09-24T00:26:58+07:00", "captured_at_time_base": "dumpsys_section_snapshot",
-        "age_seconds_at_capture": 19, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
-        "freshness_basis": { "input": "dumpsys footer", "basis": "inside capture.log_window",
+      "provenance": { "evidence_origin": "dumpsys_cpu_monitor", "section_title": "<section_title>",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "dumpsys_section_snapshot",
+        "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot", "freshness": "in_window",
+        "freshness_basis": { "input": "the section footer's ending-at stamp",
+          "basis": "inside capture.log_window",
           "threshold_seconds": 3600 },
         "collector_perturbed": false, "collector_perturbed_basis": "see cpu-001" } },
 
-    { "id": "cpu-003", "kind": "boot_load_not_steady_state",
-      "title": "Header load average 10.42 / 2.38 / 0.78 on a device with sub-minute uptime is a boot-in-progress signature, not sustained load",
+    { "id": "cpu-003", "kind": "load_history_conflict",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
-      "attributes": { "boot_in_progress": true },
-      "metrics": { "load_1m": 10.42, "load_5m": 2.38, "load_15m": 0.78, "online_cpus": 4 },
+      "attributes": { "load_history_conflict": true },
+      "metrics": { "load_1m": <n>, "load_5m": <n>, "load_15m": <n>, "online_cpus": <n>,
+                   "uptime_ms_at_read": <ms>, "load_15m_implies_uptime_ms": <ms> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 43, "line_end": 43 },
-        "excerpt": "Uptime: up 0 weeks, 0 days, 0 hours, 0 minutes,  load average: 10.42, 2.38, 0.78",
-        "excerpt_truncated": false, "excerpt_bytes": 80, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim header uptime and load-average line>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
-      "provenance": { "captured_at": "2026-09-24T00:27:17+07:00", "captured_at_time_base": "dumpstate_header",
-        "age_seconds_at_capture": 0, "capture_kind": "point_in_time_snapshot", "freshness": "now",
-        "freshness_basis": { "input": "header uptime", "basis": "printed in the archive header itself",
+      "provenance": { "captured_at": "<captured_at>", "captured_at_time_base": "dumpstate_header",
+        "age_seconds_at_capture": <age>, "capture_kind": "point_in_time_snapshot", "freshness": "now",
+        "freshness_basis": { "input": "the uptime the header itself prints",
+          "basis": "printed in the archive header itself",
           "threshold_seconds": 3600 },
-        "collector_perturbed": false, "collector_perturbed_basis": "kernel EWMA" } },
+        "collector_perturbed": false, "collector_perturbed_basis": "live_log_capture" } },
 
     { "id": "cpu-004", "kind": "contention_localized",
-      "title": "33 ART Java-monitor stalls, max 1.780s, ALL 6 events over 1s inside com.google.android.gms on a single MessageQueue-shaped monitor; zero over 1s in system_server",
       "severity": "medium", "unconstrained_severity": "medium", "confidence": "confirmed",
       "process_key": null, "event_time": null,
-      "attributes": { "localized_to": ["com.google.android.gms", "com.google.android.gms.persistent"],
-                      "owner_method": "axte.h(java.lang.String)" },
-      "metrics": { "art_java_monitor_event_count": 33, "wait_ms_max": 1780, "wait_ms_min": 105,
-                   "events_over_threshold_1s": 6, "events_in_system_server": 0,
-                   "dvm_lock_sample_sampled_event_count": 168, "dvm_lock_sample_max_wait_ms": 497 },
+      "attributes": { "localized_to": ["<process_name>", "<process_name>"],
+                      "owner_method": "<owner_method>(<signature>)" },
+      "metrics": { "art_java_monitor_event_count": <n>, "wait_ms_max": <ms>, "wait_ms_min": <ms>,
+                   "events_over_threshold_1s": <n>, "events_in_system_server": <n>,
+                   "dvm_lock_sample_sampled_event_count": <n>, "dvm_lock_sample_max_wait_ms": <ms> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 27041, "line_end": 27041 },
-        "excerpt": "Long monitor contention with owner axte.h (0) at axte.h(java.lang.String)(com.google.android.gms@254232109@25.42.32:28) waiters=0 in axte.d(java.lang.String) for 1.780s",
-        "excerpt_truncated": true, "excerpt_bytes": 512, "excerpt_complete": false },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim contention line>",
+        "excerpt_truncated": true, "excerpt_bytes": <n>, "excerpt_complete": false },
       "corroborating_evidence": [],
       "provenance": { "evidence_origin": "art_monitor_contention", "section_title": "SYSTEM LOG",
-        "section_ordinal": 0, "line_start": 27041, "line_end": 53823,
-        "captured_at": "2026-09-24T00:27:16.117+07:00", "captured_at_time_base": "logcat_line",
-        "age_seconds_at_capture": 0.883, "capture_kind": "live_log", "freshness": "in_window",
+        "section_ordinal": 0, "line_start": <line>, "line_end": <line>,
+        "captured_at": "<captured_at>", "captured_at_time_base": "logcat_line",
+        "age_seconds_at_capture": <age>, "capture_kind": "live_log", "freshness": "in_window",
         "freshness_basis": { "input": "logcat line stamp",
           "basis": "logged as they occur, inside capture.log_window", "threshold_seconds": 3600 },
-        "collector_perturbed": false, "collector_perturbed_basis": "logged as they occur" } },
+        "collector_perturbed": false, "collector_perturbed_basis": "live_log_capture" } },
 
     { "id": "cpu-005", "kind": "no_io_stall",
-      "title": "IOTOP over its 1s window shows max IO/swap/mem delay 0.00% (below the resolution floor) but max run-queue delay 24.65% on three Blocking Thread entries",
       "severity": "info", "unconstrained_severity": "info", "confidence": "confirmed",
       "process_key": null, "event_time": null,
-      "attributes": { "note": "0.00% is a %.2f resolution floor, not zero I/O; the same table carries 4904 KiB/s read" },
-      "metrics": { "max_sched_delay_pct": 24.65, "max_io_delay_pct": 0.0,
-                   "psi_io_full_avg10": 2.84, "psi_cpu_full_avg10": 0.0, "psi_memory_full_avg10": 0.97 },
+      "attributes": { "note": "a 0.00% reading is a fixed-decimal resolution floor, not zero I/O; the same table carries non-zero throughput" },
+      "metrics": { "max_sched_delay_pct": <pct>, "max_io_delay_pct": <pct>,
+                   "psi_io_full_avg10": <pct>, "psi_cpu_full_avg10": <pct> },
       "evidence": { "archive_path": "<main_entry>", "kind": "line_range",
-        "locator": { "line_start": 56843, "line_end": 56850 },
-        "excerpt": "  2630 Blocking Thread       0   2308   2308      0     99  0.00%  0.00% 24.65%  0.00% 24.65%",
-        "excerpt_truncated": false, "excerpt_bytes": 87, "excerpt_complete": true },
+        "locator": { "line_start": <line>, "line_end": <line> },
+        "excerpt": "<verbatim iotop row>",
+        "excerpt_truncated": false, "excerpt_bytes": <n>, "excerpt_complete": true },
       "corroborating_evidence": [],
       "provenance": { "evidence_origin": "iotop", "section_title": "IOTOP", "section_ordinal": 0,
-        "line_start": 56843, "line_end": 56860,
+        "line_start": <line>, "line_end": <line>,
         "captured_at": null, "captured_at_time_base": "undetermined",
         "age_seconds_at_capture": null, "capture_kind": "command_output", "freshness": "undated",
         "freshness_basis": { "input": "none",
-          "basis": "iotop prints no clock; the measured window is 1 s from its own sample loop (iotop.cpp:226-273)",
+          "basis": "the reading carries no printed clock; its window comes from the tool's own sampling loop, not from a stamp",
           "threshold_seconds": 3600 },
-        "collector_perturbed": true, "collector_perturbed_basis": "mid-dump 1 s sample" } }
+        "collector_perturbed": true, "collector_perturbed_basis": "section_measured_during_dump" } }
+  ],
+
+  "evidence_gaps": [
+    { "field": "utilization[].pct_steal", "reason": "NOT_PRINNED",
+      "detail": "the aggregate CPU row this channel prints has no steal bucket, so steal is structurally unavailable from these bytes. It is never defaulted to 0; where the aggregate channel omits it, the value is null with a stated reason and steal is read per-CPU from the cpu_monitor channel instead." },
+    { "field": "utilization[].pct_nice", "reason": "NOT_PRINNED",
+      "detail": "same structural absence as steal for the aggregate row. Note the top channel does print a nice column, so the two entries of this array legitimately disagree on which buckets exist." },
+    { "field": "contention.art_java_monitor.threshold_ms", "reason": "UNVERIFIABLE",
+      "detail": "the reporting floor is a platform constant scaled by a build-variant factor. No bugreport records either value, so a tool cannot derive the floor from the archive; it must be supplied by configuration and published alongside threshold_derivation. Its practical consequence is that stalls below the floor are unobservable and their absence is not evidence of health." },
+    { "field": "contention.dvm_lock_sample.example field order", "reason": "UNVERIFIABLE",
+      "detail": "the payload is positional and its layout is declared in the platform event-log tag file, which no bugreport contains. The example is published in decomposed form so a reader need not trust the assumed slot order to use the numbers." },
+    { "field": "load.load_15m_implies_uptime_ms", "reason": "AMBIGUOUS_SOURCE",
+      "detail": "load_15m implies far more history than the printed uptime admits, and nothing in the archive adjudicates why — whether the kernel does not reset the load average across the first userspace processes or seeds the average from a previous boot. load_history_conflict publishes the conflict and load_1m must never be reported without uptime_ms_at_read." },
+    { "field": "stall_signals.proc_churn.rate_per_s", "reason": "REGION_EXCLUDED",
+      "detail": "the event-log buffer retains only a fraction of the log window, and a rate computed over so short an interval is dominated by the startup burst rather than by steady-state churn. rate_valid is false and the arithmetic result is withheld rather than published with a caveat." },
+    { "field": "power_history", "reason": "UNVERIFIABLE",
+      "detail": "both power sections describe a previous boot. They are quarantined in their own top-level object so that no join to utilization[] or to any uptime-derived field is structurally possible." }
   ],
 
   "negative_evidence": [
     { "scope": "ART runtime-mutex contention channel",
-      "statement": "channel enabled and searched; 0 'Monitor contention with tid' events satisfied the 50 ms rate limit during the log window",
+      "statement": "channel enabled and searched; 0 'Monitor contention with tid' events satisfied its rate limit during the log window",
       "source": { "archive_path": "<main_entry>", "section_title": "SYSTEM LOG", "section_ordinal": 0 },
       "authority": "archive_absence" }
   ],
 
   "notes": [
-    "CPUINFO_WINDOW_PREDATES_DUMP: the dumpsys cpuinfo window is 1.772 s ending 18.415 s BEFORE dumpstate started, because CpuBinder.dumpCritical prints pre-existing background samples (AppProfiler.java:2332-2335) from a thread that refreshes at most every 5 s (:142, :2156-2160). collector_perturbed is false for this channel and true for top, iotop, dumpsys_meminfo and bugreport_procdump.",
-    "NO_STEAL_IN_GLOBAL_RATIO: dumpsys cpuinfo's TOTAL structurally cannot contain steal because SYSTEM_CPU_FORMAT (ProcessCpuTracker.java:126-134) stops at softirq. Steal is only available per-CPU via the cpu_monitor binder service. pct_steal is null for dumpsys_cpuinfo with null_reasons stating why; it is never 0 by default.",
-    "TOTAL_LINES_DISAGREE_CORRECTLY: '61% TOTAL' (cpuinfo, 1.772 s window) and '400%cpu' (top, own sample) are both correct over different windows against different denominators. They are two entries of utilization[], never merged.",
-    "CPU_BREAKDOWN_CORRECTED: the archive says '17% kernel', not nice; nice is 12% in the top line.",
-    "CONTENTION_IS_NEVER_A_COUNT: 33 Long monitor contention events have a 1000 ms reporting floor on a debuggable build (monitor.cc:53-54), and 168 dvm_lock_sample events are a duration-weighted probability sample (monitor.cc:529-536). contention.art_rate_limiting.counting_caveat is mandatory prose.",
-    "HELD_BY_THREAD_IS_STALE: the single 'held by thread' match in the archive is at line 310026, inside the 126.80-day-old VM TRACES AT LAST ANR section. counts.held_by_thread_hits records it as stale_region, not as live contention.",
-    "PROC_CHURN_RATE_GATED: am_proc_start=121 over a 64.662 s event-log window with 0.314 buffer coverage gives 1.873/s arithmetically, which MUST NOT be published. rate_valid is false and rate_per_s is null.",
-    "POWER_HISTORY_QUARANTINED: batterystats and powerstats describe a previous boot and are never joined to utilization[] or to any uptime-derived field."
+    "CPUINFO_WINDOW_PREDATES_DUMP: the dumpsys cpuinfo window closed before dumpstate started, because this channel prints pre-existing background samples rather than taking a fresh one. collector_perturbed is false for this channel and true for top, iotop, dumpsys_meminfo and bugreport_procdump.",
+    "NO_STEAL_IN_GLOBAL_RATIO: the aggregate CPU row structurally cannot contain steal. pct_steal is null for that channel with null_reasons stating why; it is never 0 by default.",
+    "CHANNELS_DISAGREE_BY_DESIGN: two CPU channels disagree because they measure different windows against different denominators. They are two entries of utilization[] and are never merged; neither is corrected toward the other.",
+    "CONTENTION_IS_NEVER_A_COUNT: no field in contention is a count of stalls. The sampled channel's true population is unbounded below because sampling probability varies per wait duration, and the Java-monitor channel has a reporting floor above which shorter waits are unobservable.",
+    "HELD_BY_THREAD_IS_STALE: the only match for this pattern in the archive falls inside an archived trace section that predates this boot by months, so it is counted as stale_region rather than as live contention.",
+    "PROC_CHURN_RATE_GATED: the arithmetic per-boot churn rate over so short and so poorly covered a window is withheld rather than published with a caveat. rate_valid is false and rate_per_s is null.",
+    "POWER_HISTORY_QUARANTINED: battery and power history describe a previous boot and are never joined to utilization[] or to any uptime-derived field."
   ]
 }
 ```
