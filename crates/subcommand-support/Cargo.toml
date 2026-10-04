@@ -1,9 +1,0 @@
-[package]
-name = "bugreport-insight-subcommand-support"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-clap.workspace = true
-serde.workspace = true
-serde_json.workspace = true

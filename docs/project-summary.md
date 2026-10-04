@@ -13,28 +13,52 @@ audience: Engineering Team, Architects, Stakeholders
 
 - **Requirements** – `docs/requirements.md`
 - **Requirement Diagram** – `docs/requirement-diagram.md`
-- **Artifact Schemas** – `docs/artifact-schemas.md`
+- **Traceability Matrix** – `docs/traceability-matrix.md`
+- **Artifact Schemas (DRAFT)** – `docs/artifact-schemas.md`
 - **Use Cases** – `docs/use-cases.md`
 - **Architecture Diagram** – `docs/architecture.md`
-- **Class Diagram** – `docs/classes.md`
-- **Sequence Diagrams** – `docs/sequences.md`
-- **Activity Diagrams** – `docs/activities.md`
+
+`docs/classes.md`, `docs/sequences.md`, and `docs/activities.md` were removed during the redesign and
+will be redrawn against the committed requirements once `core` and `mcp` are implemented.
+
+Every specification document assigns IDs to its own elements — `ARCH-*` in the architecture diagram,
+`UC-*` in the use cases — and links each one into [`docs/traceability-matrix.md`](./traceability-matrix.md)
+alongside the requirements it serves. That matrix is the join between "what the tool must do" and
+"what the design says will do it".
 
 The `docs/index.md` file aggregates these references for easy navigation.
 
 ## Key Features
 
-- Read‑only ZIP access; no temporary extraction.
-- Modular scanner plugins (ANR, stacktrace, memory, CPU, etc.).
-- Generates bounded findings with evidence excerpts.
-- Subcommand dispatch for focused analysis (`bugreport‑insight <verb>`).
+**Committed now ✅**
 
-## Decided Artifact Schemas
+- Read-only ZIP access with size and entry-count limits; no temporary extraction (`REQ-GEN-01`, `REQ-GEN-02`).
+- An MCP server for AI agents over stdio (`REQ-MCP-01` … `10`).
+- Seven archive tools: `archive_info`, `list_entries`, `find_entries`, `read_entry`, `grep_archive`, `entry_info`, `find_by_type` (`REQ-MCP-ARC-01` … `07`).
+- `--mcp`, `--help`, and `--verbose` (`REQ-CLI-03`, `REQ-CLI-04`, `REQ-CLI-05`).
+
+**Draft 🚧 — analyzer work not started**
+
+- Modular scanner plugins (ANR, stacktrace, memory, CPU, etc.) (`DRAFT-REQ-GEN-03`).
+- Generates bounded findings with evidence excerpts, as artifacts (`DRAFT-REQ-GEN-04`, `DRAFT-REQ-ART-01` … `08`).
+- Subcommand dispatch for focused analysis (`bugreport-insight <verb>`) (`DRAFT-REQ-CLI-02`, `DRAFT-REQ-CLI-06` … `11`).
+
+## Artifact Schemas (DRAFT)
 
 The seven analysis artifacts — `README.md`, `system.json`, `apps.json`, `anr.json`,
 `crashes.json`, `memory.json`, `cpu.json` — are specified in
 [`docs/artifact-schemas.md`](./artifact-schemas.md), and constrained by the requirements
-`REQ-ART-01` through `REQ-ART-08` in [`docs/requirements.md`](./requirements.md).
+`DRAFT-REQ-ART-01` through `DRAFT-REQ-ART-08` in
+[`docs/requirements.md`](./requirements.md). Those eight are draft, as is the section containing them
+and everything else the analyzers produce: `DRAFT-REQ-GEN-03` and `DRAFT-REQ-GEN-04`, plus
+`DRAFT-REQ-CLI-01`, `DRAFT-REQ-CLI-02`, and `DRAFT-REQ-CLI-06` through `DRAFT-REQ-CLI-11`. What is not
+draft is what the tool needs first: reading and grepping the ZIP (`REQ-GEN-01`, `REQ-GEN-02`), the MCP
+server (`REQ-MCP-01` through `REQ-MCP-06` and `REQ-MCP-08` through `REQ-MCP-10`), the seven
+`REQ-MCP-ARC-*` archive tools, and the `--mcp`, `--help`, and `--verbose` options (`REQ-CLI-03`,
+`REQ-CLI-04`, `REQ-CLI-05`). `DRAFT-REQ-MCP-07`, exposing the artifacts as MCP resources, is not being
+implemented now.
+
+Of 46 requirements, 22 are committed and 24 are draft.
 
 The schemas were derived by reading the AOSP source that produces a bugreport, so every field
 is traceable to evidence the archive actually contains. Two constraints shape most of them:
