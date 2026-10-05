@@ -1,41 +1,34 @@
 # bugreport-insight
 
-Generate local insight artifacts from Android `adb bugreport` ZIP archives
-without extracting their contents.
+A read-only [MCP](https://modelcontextprotocol.io) server over an Android
+`adb bugreport` ZIP archive. See [`docs/index.md`](./docs/index.md) for the tool
+set, the workspace layout, and how to build.
 
 ```console
-cargo run -- ./tmp/bugreport.zip
+bugreport-insight BUGREPORT.zip --mcp
 ```
 
-The command writes `.bugreport/insight/` beside the input archive. Bugreports
-often contain sensitive information; keep both archives and generated artifacts
-local and review them before sharing.
+<copilot-ref kind="file" target-id="docs/requirements.md" label="Requirements" />
+<copilot-ref kind="file" target-id="docs/requirement-diagram.md" label="Requirement Diagram" />
+<copilot-ref kind="file" target-id="docs/traceability-matrix.md" label="Traceability Matrix" />
+<copilot-ref kind="file" target-id="docs/artifact-schemas.md" label="Artifact Schemas (DRAFT)" />
+<copilot-ref kind="file" target-id="docs/use-cases.md" label="Use Case Diagram" />
+<copilot-ref kind="file" target-id="docs/architecture.md" label="Architecture Diagram" />
 
-## Focused subcommands
+## Design decisions
 
-Beyond the default full report, `bugreport-insight <verb> <BUGREPORT_ZIP>`
-dispatches to a `bugreport-insight-<verb>` binary (git/cargo-style plugin
-dispatch) that prints a single topic's findings as JSON to stdout (or to
-`--output FILE`):
+[`docs/design/`](./docs/design/index.md) holds the accepted design for the
+redesign: the rule-1 conflict resolution, the final ID list, the core archive
+API, the offline dependency rulings, the build plan, the planned documentation
+restructure, and the open items.
 
-```console
-cargo run -- anr ./tmp/bugreport.zip          # Application Not Responding events
-cargo run -- apps ./tmp/bugreport.zip         # installed/running apps: PID, package, data/install paths
-cargo run -- stacktrace ./tmp/bugreport.zip   # native crashes/tombstones and Java stack traces
-cargo run -- memory ./tmp/bugreport.zip       # memory pressure / low-memory-killer churn
-cargo run -- cpu ./tmp/bugreport.zip          # CPU/I-O thrashing and lock contention
-```
+Start at [`design/index.md`](./docs/design/index.md). Engineers should read
+[`design/03-id-scheme.md`](./docs/design/03-id-scheme.md),
+[`design/04a-core-archive-api.md`](./docs/design/04a-core-archive-api.md), and
+[`design/04b-core-archive-types.md`](./docs/design/04b-core-archive-types.md)
+first.
 
-These built-in subcommands are separate lib+bin crates in this workspace: each
-crate's `lib.rs` owns that verb's scanner (e.g. `bugreport-insight-anr` owns
-`scan_anrs()`), and its `main.rs` is a thin binary wrapping it. This makes
-every scanner independently reusable as a library — including by
-`bugreport-insight`'s own default full report, which links all of them
-alongside `bugreport-insight-core`. Third-party subcommands (for example a
-`dumpstate` subcommand) work the same way: install a `bugreport-insight-<verb>`
-executable on `PATH` — built against `bugreport-insight-core` directly (for
-shared infra like `open_report`), and optionally against one or more
-`bugreport-insight-<verb>` crates as libraries (to reuse an existing
-scanner), or reusing `bugreport-insight-subcommand-support` for CLI/JSON-output
-plumbing — and `bugreport-insight <verb> ...` will find and run it.
-`bugreport-insight help <verb>` shows that subcommand's own `--help` text.
+> The design set's crate naming (`crates/archive`) is **superseded**: the crate is
+> `crates/core`, package `bugreport-insight-core`. See
+> [`architecture.md` §3](./docs/architecture.md#31-committed). `docs/` wins for scope
+> and `docs/design/` for reasoning.

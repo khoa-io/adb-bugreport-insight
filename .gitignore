@@ -3,3 +3,13 @@
 /.bugreport-*/
 /.BUGREPORT/
 .DS_Store
+
+# The memory bank is working notes, not source. This entry is deliberately
+# repo-local: the ignore is currently coming from the global
+# `core.excludesFile`, so on a machine without that file the memory bank would
+# become tracked. See docs/design/09-open-items.md item 13.
+/.memory-bank/
+
+# Manual stdio probe transcripts. The inputs in scripts/ are tracked; what the
+# probe writes is not.
+/scripts/out/

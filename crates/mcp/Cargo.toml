@@ -1,0 +1,22 @@
+[package]
+name = "bugreport-insight-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bugreport-insight-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+
+# The only crate that may name an `rmcp` symbol (architecture.md §4). The
+# adapter module is the single import site; everything below it is protocol-free.
+rmcp = { version = "3.5.0", features = ["server", "transport-io"] }
+
+# `spawn_blocking` for the two content-touching tools. Content reads must not
+# run on the async runtime's worker threads (design/05-mcp-server-design.md §3).
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros", "process"] }

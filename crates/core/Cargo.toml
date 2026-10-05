@@ -1,0 +1,18 @@
+[package]
+name = "bugreport-insight-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+zip = { workspace = true }
+grep-regex = { workspace = true }
+grep-matcher = { workspace = true }
+
+# Not declared in the root `[workspace.dependencies]`, and the root manifest is
+# owned by another agent, so it is pinned here directly. `sha2 0.10.9` is pure
+# Rust and needs no C toolchain; it replaces `ring` per open item 17 and is the
+# crate `architecture.md` §3.1 names for ARCH-ARCHIVE.
+sha2 = "0.10"

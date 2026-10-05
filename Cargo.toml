@@ -2,32 +2,31 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/mcp",
     "crates/cli",
-    "crates/subcommand-support",
-    "crates/subcommand-anr",
-    "crates/subcommand-apps",
-    "crates/subcommand-stacktrace",
-    "crates/subcommand-memory",
-    "crates/subcommand-cpu",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-# Dependencies shared by two or more crates, declared once here so every crate's manifest just
-# references `<name>.workspace = true` instead of repeating a version (and, for in-workspace
-# crates, a relative path) in each `Cargo.toml`.
 [workspace.dependencies]
 bugreport-insight-core = { path = "crates/core" }
-bugreport-insight-subcommand-support = { path = "crates/subcommand-support" }
-bugreport-insight-anr = { path = "crates/subcommand-anr" }
-bugreport-insight-apps = { path = "crates/subcommand-apps" }
-bugreport-insight-stacktrace = { path = "crates/subcommand-stacktrace" }
-bugreport-insight-memory = { path = "crates/subcommand-memory" }
-bugreport-insight-cpu = { path = "crates/subcommand-cpu" }
-clap = { version = "4.5", features = ["derive"] }
+bugreport-insight-mcp = { path = "crates/mcp" }
+clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+grep-matcher = "0.1.9"
+grep-regex = "0.1.14"
+grep-pcre2 = "0.1.10"
+grep-searcher = "0.1.17"
+grep-printer = "0.3.1"
+rmcp = { version = "3.5.0", features = ["server", "transport-io"] }
+
+# rmcp's own schema dependency, declared directly so `tools/params.rs` can
+# derive `JsonSchema` without naming an `rmcp` symbol. Resolves to the same
+# 1.2.2 rmcp uses, so the generated schemas are the same types.
+schemars = "1.0"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }

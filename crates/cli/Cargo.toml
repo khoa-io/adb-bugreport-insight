@@ -1,0 +1,18 @@
+[package]
+name = "bugreport-insight-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "bugreport-insight"
+path = "src/main.rs"
+
+[dependencies]
+# A peer of `crates/mcp`, not a parent (architecture.md §4). The CLI owns argv
+# parsing and mode selection; it must not reach an `rmcp` symbol itself.
+bugreport-insight-mcp = { workspace = true }
+clap = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

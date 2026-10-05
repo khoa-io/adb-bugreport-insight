@@ -24,7 +24,7 @@
 This project provides a command-line tool for analyzing Android bugreport ZIP archives. The primary requirements are:
 
 - **Read-only ZIP access**: Must open bugreport ZIP archives without extracting files to disk. <a id="req-gen-01"></a> ([`REQ-GEN-01`](./requirement-diagram.md#req-gen-01))
-- **Safety limits**: Enforce size and entry count limits to prevent resource exhaustion. <a id="req-gen-02"></a> ([`REQ-GEN-02`](./requirement-diagram.md#req-gen-02))
+- **Safety limits**: `bugreport-insight` refuses any archive that exceeds, at open time: **10,000** entries in the central directory; **256 MiB** uncompressed size of any single entry (enforced against the decompressed stream, not only the declared header); **1 GiB** total uncompressed across all entries; **2 GiB** archive file size. A violation is an **error**, never a silent truncation. Limits are constants of the library (`crates/archive`) and are not configurable per run. Measurement point: archive open time, before any entry is read. <a id="req-gen-02"></a> ([`REQ-GEN-02`](./requirement-diagram.md#req-gen-02))
 - **Evidence extraction**: Scan logcat/dumpstate for ANR, crashes, memory pressure, CPU contention, and other signals. <a id="draft-req-gen-03"></a> ([`DRAFT-REQ-GEN-03`](./requirement-diagram.md#draft-req-gen-03))
 - **Artifact generation**: Produce JSON/NDJSON findings, a Markdown README, a manifest, and session segmentation. <a id="draft-req-gen-04"></a> ([`DRAFT-REQ-GEN-04`](./requirement-diagram.md#draft-req-gen-04))
 
@@ -69,13 +69,8 @@ Key requirements include:
 - **Read-only tool surface**: No tool mutates the archive, the analysis output directory, or any other
   state. The CLI's job is to write artifacts; the server's job is to answer questions about one
   already-opened archive. <a id="req-mcp-04"></a> ([`REQ-MCP-04`](./requirement-diagram.md#req-mcp-04))
-- **Tool naming and typing**: Every tool is named, described, and declared with a typed input schema
-  and a documented result shape, so an agent can call it without reading the implementation. A tool
-  that no backing capability justifies does not exist. <a id="req-mcp-05"></a> ([`REQ-MCP-05`](./requirement-diagram.md#req-mcp-05))
-- **Bounded responses**: A tool result is bounded. An excerpt is capped at 512 bytes with its
-  truncation flagged, a result set is capped and reports what it omitted, and a tool can never return
-  an archive section verbatim. The failure mode being designed against is an agent whose context is
-  consumed by one response. <a id="req-mcp-06"></a> ([`REQ-MCP-06`](./requirement-diagram.md#req-mcp-06))
+- **Tool naming and typing**: Every tool is named, described, and declared with a typed input schema (`JSON Schema` via `schemars`) and a documented result shape (`truncated: bool`, `stopped_reason: enum | null`, `omitted_count: int ≥ 0`, `notes: string[]` — all four always present, never omitted), so an agent can call it without reading the implementation. A regression test asserts the `tools/list` response carries the seven committed tool names with their schemas. <a id="req-mcp-05"></a> ([`REQ-MCP-05`](./requirement-diagram.md#req-mcp-05))
+- **Bounded responses**: Every tool result carries `truncated: bool`, `stopped_reason: enum | null`, `omitted_count: int ≥ 0`, and `notes: string[]` — **all four always present, never omitted**. `stopped_reason` ∈ `{item_cap | match_cap | scan_budget | line_too_long | byte_budget}`. Defaults: **200** items per list result (`list_entries`, `find_entries`, `find_by_type`), **50** grep matches (`grep_archive`), **32 MiB** scanned per grep call. Excerpt cap **512 bytes**, hard. A result set is capped and reports what it omitted (`omitted_count` and `notes`). A tool never returns an archive section verbatim. Measurement point: the result envelope returned to the agent over stdio. <a id="req-mcp-06"></a> ([`REQ-MCP-06`](./requirement-diagram.md#req-mcp-06))
 - **Artifacts are exposed as resources**: The generated artifacts, including `README.md`, are readable
   as MCP resources, so an agent can cite the triage document rather than re-deriving one. What a
   resource returns is the artifact as written, not a summary of it. <a id="draft-req-mcp-07"></a> ([`DRAFT-REQ-MCP-07`](./requirement-diagram.md#draft-req-mcp-07))
@@ -83,12 +78,8 @@ Key requirements include:
   nothing matched, distinguishing that from a tool that failed, a section that was absent from the
   archive, and a section the tool was not permitted to read. The `section_status` enum survives into
   tool results. <a id="req-mcp-08"></a> ([`REQ-MCP-08`](./requirement-diagram.md#req-mcp-08))
-- **Evidence discipline carries over**: A tool result states evidence as a locator — archive path,
-  kind, line or byte range — exactly as the JSON artifacts do, and never as a copy of the source. A
-  tool never returns a claim the corresponding artifact would not publish, including a causal claim
-  linking a delta to its collector. <a id="req-mcp-09"></a> ([`REQ-MCP-09`](./requirement-diagram.md#req-mcp-09))
-- **stdio is the required transport**: The server speaks MCP over stdio. Additional transports are
-  optional and out of scope for this requirement set. <a id="req-mcp-10"></a> ([`REQ-MCP-10`](./requirement-diagram.md#req-mcp-10))
+- **Evidence discipline carries over**: A tool result states evidence as a locator — archive `entry_id`, kind (`text` | `binary` | `nested_zip`), line or byte range (`byte_offset` included for `grep_archive`), and a bounded excerpt capped at **512 bytes** with truncation and completeness flagged — exactly as the JSON artifacts do, and never as a copy of the source. The locator uses `entry_id` addressing (`systemPatterns.md` §4), never a raw path string. <a id="req-mcp-09"></a> ([`REQ-MCP-09`](./requirement-diagram.md#req-mcp-09))
+- **stdio is the required transport**: The server speaks MCP over stdio (`rmcp` 3.5.0, vendored offline alongside its transitive chain). SSE and HTTP transports are not part of this requirement set and are not implemented. <a id="req-mcp-10"></a> ([`REQ-MCP-10`](./requirement-diagram.md#req-mcp-10))
 
 ### Tools
 
@@ -108,20 +99,12 @@ runs an analyzer.
   agent calls first, and the one that answers "am I looking at the archive I think I am". The values
   are the same ones [`system.json`](#draft-req-art-03) publishes, but computed without an analyzer.
   <a id="req-mcp-arc-01"></a> ([`REQ-MCP-ARC-01`](./requirement-diagram.md#req-mcp-arc-01))
-- **`list_entries`** — Lists the ZIP and TAR entries with their paths and sizes. Takes an optional
-  path prefix so an agent can enumerate one subtree — `ANR/`, for instance — rather than the whole
-  archive. Bounded by `REQ-MCP-06`, and reports what it omitted. <a id="req-mcp-arc-02"></a> ([`REQ-MCP-ARC-02`](./requirement-diagram.md#req-mcp-arc-02))
+- **`list_entries`** — Lists the ZIP entries with their paths and sizes. The implementation is ZIP-only (`zip 2.4.2`, central-directory walk); TAR is not supported. Takes an optional path prefix so an agent can enumerate one subtree — `ANR/`, for instance — rather than the whole archive. Bounded by `REQ-MCP-06`, and reports what it omitted. Multi-format archive support (TAR, nested ZIP) is preserved as a draft intent: see `DRAFT-REQ-MCP-ARC-09`. <a id="req-mcp-arc-02"></a> ([`REQ-MCP-ARC-02`](./requirement-diagram.md#req-mcp-arc-02))
 - **`find_entries`** — Filters entries by glob or regular expression on the path and returns matching
   paths only, with no content. The cheap way for an agent to discover what is in the archive before
   reading any of it. <a id="req-mcp-arc-03"></a> ([`REQ-MCP-ARC-03`](./requirement-diagram.md#req-mcp-arc-03))
-- **`read_entry`** — Returns a bounded slice of one entry, addressed by line range or byte range.
-  Never returns the whole entry; the cap and the truncation flag are mandatory, and a range beyond
-  end-of-entry returns what exists plus the fact that it did. <a id="req-mcp-arc-04"></a> ([`REQ-MCP-ARC-04`](./requirement-diagram.md#req-mcp-arc-04))
-- **`grep_archive`** — Searches entry contents for a literal or regular expression and returns
-  matches as locators — path, line, and a bounded excerpt — never as raw section text. Because this
-  is the tool most likely to exhaust an agent's context, it takes an explicit match cap and an
-  explicit entry scope, and `REQ-MCP-06` applies on top of both. `REQ-MCP-08` governs the
-  zero-match case. <a id="req-mcp-arc-05"></a> ([`REQ-MCP-ARC-05`](./requirement-diagram.md#req-mcp-arc-05))
+- **`read_entry`** — Returns a bounded slice of one entry, addressed by `entry_id` (`EntryId`, never a raw path string — `systemPatterns.md` §4). Two explicitly-named, mutually-exclusive parameter pairs: (`line_start`, `line_end`) for line-range reads, and (`byte_start`, `byte_end`) for byte-range reads; a call must specify exactly one pair. Never returns the whole entry; the cap (**512 bytes** excerpt, **1 MiB** line size) and the truncation flag (`truncated: bool`) are mandatory, and a range beyond end-of-entry returns what exists plus the fact that it did (`stopped_reason: byte_budget | line_too_long`). <a id="req-mcp-arc-04"></a> ([`REQ-MCP-ARC-04`](./requirement-diagram.md#req-mcp-arc-04))
+- **`grep_archive`** — Searches entry contents for a literal (`Literal`) or glob (`Glob`) pattern and returns matches as locators — `entry_id`, `line`, `byte_offset` (required on every match — `systemPatterns.md` §9), and a bounded excerpt (**512 bytes** max) — never as raw section text. Because this is the tool most likely to exhaust an agent's context, it takes an explicit match cap (**50** default) and an explicit entry scope (`entry_id` list), and `REQ-MCP-06` applies on top of both. `REQ-MCP-08` governs the zero-match case. Pattern mode `Regex` is deferred (`DRAFT-REQ-MCP-ARC-08`). This is an `interfaceRequirement`, not a performance requirement; performance belongs to `REQ-MCP-06`. <a id="req-mcp-arc-05"></a> ([`REQ-MCP-ARC-05`](./requirement-diagram.md#req-mcp-arc-05))
   - **`entry_info`** — Returns everything known about **one** entry, addressed by path: compressed and
     uncompressed byte size, compression method, modification time, and its detected content type. This
     is where size becomes authoritative; `list_entries` carries sizes for orientation, and this is the
@@ -133,6 +116,7 @@ runs an analyzer.
     confident label: an entry is identified as text or binary from its bytes, and a more specific type
     is claimed only when the archive's own metadata or the byte content supports it. An
     unidentifiable entry is reported as such rather than guessed at. <a id="req-mcp-arc-07"></a> ([`REQ-MCP-ARC-07`](./requirement-diagram.md#req-mcp-arc-07))
+- **`DRAFT-REQ-MCP-ARC-09`** — Multi-format archive support: the server may eventually open TAR archives and nested ZIP entries in addition to the committed ZIP-only scope (`REQ-MCP-ARC-02`). Not implemented; the `PatternMode::Regex` deferral (`DRAFT-REQ-MCP-ARC-08`) and the `zip` crate's `time` feature absence (`zip/time`) are prerequisites. <a id="draft-req-mcp-arc-09"></a> ([`DRAFT-REQ-MCP-ARC-09`](./requirement-diagram.md#draft-req-mcp-arc-09))
 
 #### Analyzer tools (DRAFT)
 
@@ -151,12 +135,13 @@ over.
   cost so a swap delta is not read as the device's. <a id="draft-req-mcp-mem-01"></a> ([`DRAFT-REQ-MCP-MEM-01`](./requirement-diagram.md#draft-req-mcp-mem-01))
 - **`list_cpu`** — CPU findings from the `cpu` crate, separating windowed utilization from cumulative
   counters and from contention. <a id="draft-req-mcp-cpu-01"></a> ([`DRAFT-REQ-MCP-CPU-01`](./requirement-diagram.md#draft-req-mcp-cpu-01))
+- **`DRAFT-REQ-MCP-TOOLS-ANALYSIS`** — Analyzer tool results must never publish a causal claim linking a delta to its collector (e.g., attributing a swap delta to a specific collector section) unless the corresponding committed artifact (`system.json`, `memory.json`, etc.) would also publish that claim. This prohibition applies only to analyzer-backed tools (`DRAFT-REQ-MCP-ANR-01` through `DRAFT-REQ-MCP-CPU-01`); archive tools (`REQ-MCP-ARC-*`) make no causal claims and are unaffected. <a id="draft-req-mcp-tools-analysis"></a> ([`DRAFT-REQ-MCP-TOOLS-ANALYSIS`](./requirement-diagram.md#draft-req-mcp-tools-analysis))
 
 ## Command-Line Interface
 
 The command-line interface (CLI) should provide intuitive options for users to interact with the tool. `--mcp`, `--help`, and `--verbose` are in scope now; every requirement here that drives an analyzer is draft, because the analyzers are. Key requirements include:
-* `bugreport-insight BUGREPORT`: Generate static analysis artifacts from the specified bugreport ZIP archive. There are some options: <a id="draft-req-cli-01"></a> ([`DRAFT-REQ-CLI-01`](./requirement-diagram.md#draft-req-cli-01))
-  * `--mcp`: Start an MCP server for live inspection of the bugreport. saved. Default is create a new directory named `.<BUGREPORT>`. <a id="req-cli-03"></a> ([`REQ-CLI-03`](./requirement-diagram.md#req-cli-03))
+* `bugreport-insight BUGREPORT`: Generate static analysis artifacts from the specified bugreport ZIP archive. Default output directory is `.<BUGREPORT>/insight/`. There are some options: <a id="draft-req-cli-01"></a> ([`DRAFT-REQ-CLI-01`](./requirement-diagram.md#draft-req-cli-01))
+  * `--mcp`: Start an MCP server (`bugreport-insight BUGREPORT --mcp`) bound to exactly one `BUGREPORT` archive for its lifetime (`REQ-MCP-02`), speaking MCP over stdio (`REQ-MCP-10`). The flag is the interface contract; the MCP Server section is the implementation contract. <a id="req-cli-03"></a> ([`REQ-CLI-03`](./requirement-diagram.md#req-cli-03))
   * `--sys`: Include system analysis in the generated artifacts. Default is true. <a id="draft-req-cli-02"></a> ([`DRAFT-REQ-CLI-02`](./requirement-diagram.md#draft-req-cli-02))
   * `--apps`: Include apps analysis in the generated artifacts. Default is true. <a id="draft-req-cli-06"></a> ([`DRAFT-REQ-CLI-06`](./requirement-diagram.md#draft-req-cli-06))
   * `--anr`: Include ANR (Application Not Responding) analysis in the generated artifacts. Default is true. <a id="draft-req-cli-07"></a> ([`DRAFT-REQ-CLI-07`](./requirement-diagram.md#draft-req-cli-07))
@@ -165,7 +150,7 @@ The command-line interface (CLI) should provide intuitive options for users to i
   * `--cpu`: Include CPU analysis in the generated artifacts. Default is true. <a id="draft-req-cli-10"></a> ([`DRAFT-REQ-CLI-10`](./requirement-diagram.md#draft-req-cli-10))
   * `--no-*`: Disable specific analysis types. For example, `--no-anr` will skip ANR analysis. <a id="draft-req-cli-11"></a> ([`DRAFT-REQ-CLI-11`](./requirement-diagram.md#draft-req-cli-11))
 * `bugreport-insight --help`: Display usage information and available options. <a id="req-cli-04"></a> ([`REQ-CLI-04`](./requirement-diagram.md#req-cli-04))
-* `bugreport-insight --verbose`: Enable verbose logging for debugging purposes. <a id="req-cli-05"></a> ([`REQ-CLI-05`](./requirement-diagram.md#req-cli-05))
+* `bugreport-insight --verbose`: Enable verbose logging for debugging purposes. `--verbose` sets log level on stderr (`eprintln!`); stdout carries JSON-RPC under `--mcp` and is never a logging channel. <a id="req-cli-05"></a> ([`REQ-CLI-05`](./requirement-diagram.md#req-cli-05))
 
 ## Analysis Artifacts (DRAFT) <a id="draft-req-art-02"></a> ([`DRAFT-REQ-ART-02`](./requirement-diagram.md#draft-req-art-02))
 

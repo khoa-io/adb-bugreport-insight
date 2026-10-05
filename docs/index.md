@@ -1,22 +1,86 @@
-<copilot-ref kind="file" target-id="docs/requirements.md" label="Requirements" />
-<copilot-ref kind="file" target-id="docs/requirement-diagram.md" label="Requirement Diagram" />
-<copilot-ref kind="file" target-id="docs/traceability-matrix.md" label="Traceability Matrix" />
-<copilot-ref kind="file" target-id="docs/artifact-schemas.md" label="Artifact Schemas (DRAFT)" />
-<copilot-ref kind="file" target-id="docs/use-cases.md" label="Use Case Diagram" />
-<copilot-ref kind="file" target-id="docs/architecture.md" label="Architecture Diagram" />
+# bugreport-insight
 
-<!-- `classes.md`, `sequences.md`, and `activities.md` were removed during the redesign: they
-described the previous implementation's function names and crate layout, which no longer matches the
-committed design. They will be redrawn against the committed requirements once the `core` and `mcp`
-crates are implemented. -->
+A read-only [MCP](https://modelcontextprotocol.io) server over an Android
+`adb bugreport` ZIP archive. One process opens one archive in place and serves
+it to an AI agent over stdio. Nothing is extracted, written, or modified.
 
-## Design decisions
+```console
+bugreport-insight BUGREPORT.zip --mcp
+```
 
-[`design/`](./design/index.md) holds the accepted design for the redesign: the rule-1 conflict
-resolution, the final ID list, the `crates/archive` API, the offline dependency rulings, the
-build plan, the planned documentation restructure, and the open items.
+The archive is opened **before** the transport starts, so a server that cannot
+see its archive exits non-zero with a diagnostic on stderr rather than
+answering as though the archive were empty. stdout carries JSON-RPC frames and
+nothing else.
 
-Start at [`design/index.md`](./design/index.md). Engineers should read
-[`design/03-id-scheme.md`](./design/03-id-scheme.md),
-[`design/04a-core-archive-api.md`](./design/04a-core-archive-api.md), and
-[`design/04b-core-archive-types.md`](./design/04b-core-archive-types.md) first.
+## The seven tools
+
+Entries are addressed by `entry_id`, never by path — paths are output only.
+
+| Tool | Answers | Cost |
+| --- | --- | --- |
+| `archive_info` | Am I looking at the archive I think I am? | index only; SHA-256 memoised |
+| `list_entries` | What is here, with sizes? | index only |
+| `find_entries` | Which paths match a pattern? | index only |
+| `entry_info` | Everything about one entry | index + 8 KiB sample |
+| `find_by_type` | Which paths are of this content type? | 8 KiB sample per entry |
+| `read_entry` | A bounded slice of one entry | reads bytes |
+| `grep_archive` | Content search, returning locators | scans content |
+
+Every result carries `status`, `truncated`, `stopped_reason`, `omitted_count`,
+and `notes`. `status` is one of `ok`, `empty`, `not_found`, `unreadable`: a
+failure is never shaped like a successful empty result, so `empty` always means
+the call worked and there was nothing there.
+
+Bugreports often contain sensitive information. Keep archives and any generated
+output local, and review them before sharing.
+
+## Workspace
+
+| Crate | Package | Role |
+| --- | --- | --- |
+| `crates/core` | `bugreport-insight-core` | ZIP index, bounded reader and search, content detection, archive identity |
+| `crates/mcp` | `bugreport-insight-mcp` | The seven tools behind the `ToolHandler` seam, plus the `rmcp` adapter |
+| `crates/cli` | `bugreport-insight` (binary) | argv parsing and mode selection |
+
+`crates/core` never depends on a workspace sibling. `crates/mcp` is the only
+crate that names an `rmcp` symbol, and it does so in one adapter module — which
+is what lets the whole tool layer be unit-tested with no server running.
+
+## Building
+
+```console
+cargo build --offline
+cargo test  --offline
+```
+
+`cargo`, `rustc`, and `rust-analyzer` all live in `~/.cargo/bin`, which is already on `PATH` on
+this machine. Verify with `~/.cargo/bin/rustc --print sysroot` →
+`/Users/p2p/.rustup/toolchains/stable-aarch64-apple-darwin`. Call the binaries by absolute path
+anyway when a command has to be unambiguous about which toolchain it used.
+
+Dependencies resolve from the ordinary cargo registry cache; there is no vendored
+directory and no machine-local path in the build. See
+[`architecture.md` §8](./architecture.md#8-dependency-availability--verified-2026-10-05) for
+the dependency table and for what an offline machine needs instead.
+
+## Documentation
+
+| Document | Source of truth for |
+| --- | --- |
+| [`requirements.md`](./requirements.md) | what the tool must do |
+| [`architecture.md`](./architecture.md) | what it is made of — crates, elements, IDs, status |
+| [`traceability-matrix.md`](./traceability-matrix.md) | which requirement maps to which element |
+| [`design/`](./design/index.md) | why the design is shaped this way |
+| [`use-cases.md`](./use-cases.md), [`requirement-diagram.md`](./requirement-diagram.md) | diagrams |
+| [`artifact-schemas.md`](./artifact-schemas.md) | draft artifact model — **not** committed |
+
+`artifact-schemas.md` is draft. A committed requirement never depends on a draft
+concept, so nothing in the committed scope is traceable into it.
+
+<!-- `classes.md`, `sequences.md`, and `activities.md` were removed during the
+     redesign: they described the previous implementation's function names and
+     crate layout, which no longer matches the committed design. The subcommand
+     crates they documented (`bugreport-insight-anr`, `-apps`, `-stacktrace`,
+     `-memory`, `-cpu`, `-subcommand-support`) were dropped; their element IDs are
+     retained as superseded per R-ID-3 but nothing implements them. -->
