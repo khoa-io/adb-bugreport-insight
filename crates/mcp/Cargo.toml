@@ -19,4 +19,5 @@ rmcp = { version = "3.5.0", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
 
 [dev-dependencies]
+bugreport-insight-test-fixtures = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros", "process"] }

@@ -3,7 +3,7 @@
 //! The SHA-256 is computed **once per `Archive`** and memoised in a
 //! `OnceLock`, so repeated calls cost nothing. `format_version` and
 //! `main_entry` are read **verbatim** and never parsed or branched on
-//! (`artifact-schemas.md` §2.1.2).
+//! (`docs/draft/artifact-schemas/conventions-envelope.md` §2.1.2).
 
 use std::sync::OnceLock;
 

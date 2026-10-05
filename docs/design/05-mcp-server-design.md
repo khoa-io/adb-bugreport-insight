@@ -112,7 +112,7 @@ go **directly to stderr** via `crates/mcp/src/diag.rs`, honouring `--verbose`.
 
 This also **strengthens** the stdout-purity guarantee: `eprintln!` cannot reach stdout by
 construction, whereas a misconfigured subscriber can. See
-[`02` §4.5](./02-amendment-1.md#45-tracing-subscriber-absent--no-logging-framework-in-stage-1).
+[`02` §4.5](./01-decision-record.md#54-dependency-rulings).
 
 ## 3. Concurrency — no lock anywhere
 
@@ -183,7 +183,7 @@ No `unwrap`, no `expect`, no panic in either crate.
 
 `REQ-MCP-08` requires that a zero-match result stay distinguishable from a failure, an absent
 section, and an unreadable section. It was unenforceable because `section_status` lives in a
-**draft** document (`artifact-schemas.md` §2.2), reachable only through `DRAFT-REQ-ART-*`.
+**draft** document (`../draft/artifact-schemas/conventions-envelope.md §2.2), reachable only through `DRAFT-REQ-ART-*`.
 
 **Decision: promote a committed four-value enum.** It is defined in `crates/archive` — see
 [`04b`](./04b-core-archive-types.md#archivestatus--why-it-lives-here) — and mapped onto the wire by

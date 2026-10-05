@@ -3,25 +3,23 @@
 **This is the file the two implementation engineers code and write against.** Every ID below is
 final. Do not invent IDs; if one is needed, mint it under these rules and add it here.
 
-Convention rules are in [`02` §1](./02-amendment-1.md#1-the-draft-prefix) and
-[`02` §2](./02-amendment-1.md#2-ruling-on-superseded-ids-rule-r-id-3).
+Convention rules are in [`01` §5.1](./01-decision-record.md#51-the-draft--prefix-on-component-ids)
+and [`01` §5.2](./01-decision-record.md#52-rule-r-id-3--a-superseded-id-never-changes-form).
 
-## 1. The four families
+## 1. The three families
 
 | Family | Kind | Prefix rule |
 | --- | --- | --- |
 | `REQ-*` | Requirement | `DRAFT-` if not committed |
 | `ARCH-*` | Architecture component | `DRAFT-` if every mapped requirement is draft |
 | `UC-*` | Use case | `DRAFT-` if every mapped requirement is draft |
-| `DGM-*` | Diagram index | **never** prefixed — see below |
+
+A fourth family, `DGM-*`, was proposed to name one file per diagram and is **retired unissued** — see
+[§7](#7-family-4-dgm-retired-unissued).
 
 Anchors drop the `DRAFT-` prefix: `DRAFT-ARCH-ANR` → `#draft-arch-anr`. This matches the
-existing convention at `requirements.md:28`. `#` fragments cannot cleanly carry a leading
+existing convention in `requirements.md`. `#` fragments cannot cleanly carry a leading
 prefix, and `requirements.md` already lowercases and strips.
-
-**`DGM-*` is never prefixed.** A diagram is a structural index into a document, not a
-component. Prefixing `DGM-ARTIFACTS` would mark the specification itself draft and destroy the
-ability to _specify_ draft work.
 
 ## 2. Committed versus draft
 
@@ -65,7 +63,7 @@ nothing committed depends on a draft component.
 
 | ID | Element | Requirements |
 | --- | --- | --- |
-| `ARCH-ARCHIVE` | `crates/archive` — ZIP list / read / find / grep | `REQ-GEN-01`, `REQ-GEN-02`, `REQ-MCP-03`, `REQ-MCP-09`, `REQ-MCP-ARC-01` … `07` |
+| `ARCH-ARCHIVE` | `crates/core` — ZIP list / read / find / grep *(was `crates/archive` when minted; see [`01` §5.3](./01-decision-record.md#53-the-deleted-crates-tree-is-intentional))* | `REQ-GEN-01`, `REQ-GEN-02`, `REQ-LIB-01`, `REQ-MCP-03`, `REQ-MCP-09`, `REQ-MCP-ARC-01` … `07` |
 | `ARCH-MCP-SRV` | `crates/mcp` server core — lifecycle, transport, error mapping | `REQ-MCP-01` … `06`, `REQ-MCP-08`, `09`, `10`, `11` |
 | `ARCH-MCP-TOOLS-ARC` | The seven archive tools | `REQ-MCP-ARC-01` … `07`, `REQ-MCP-05`, `REQ-MCP-06`, `REQ-MCP-08` |
 | `ARCH-CLI-FLAGS` | `crates/cli` flag parsing — `--mcp`, `--help`, `--verbose` | `REQ-CLI-03`, `REQ-CLI-04`, `REQ-CLI-05` |
@@ -87,7 +85,7 @@ nothing committed depends on a draft component.
 
 ## 4. Superseded IDs
 
-Per **Rule R-ID-3** ([`02` §2](./02-amendment-1.md#2-ruling-on-superseded-ids-rule-r-id-3)),
+Per **Rule R-ID-3** ([`02` §2](./01-decision-record.md#54-dependency-rulings)),
 these keep their original unprefixed form **forever**, whatever their successor's status.
 
 | Superseded ID | Original status | Superseded by | Why |
@@ -106,7 +104,8 @@ state diagram, and it lives in `mcp-protocol.md` when that file is created.
 
 ## 5. Family 1 — `REQ-*`
 
-**23 committed / 25 draft / 48 total**, changed from 22 / 24 / 46 by two added requirements.
+**23 committed / 27 draft / 50 total**, changed from 22 / 24 / 46 by three added requirements
+(`REQ-MCP-11`, `DRAFT-REQ-MCP-ARC-08`, `DRAFT-REQ-MCP-ARC-09`) and one reclassification.
 
 ### Committed — `docs/requirements.md`
 
@@ -123,7 +122,7 @@ written as the defective range `01 … 10`, which would silently pull in
 | ID | Status | Purpose |
 | --- | --- | --- |
 | `REQ-MCP-11` | committed | `initialize` carries `instructions`: ≤ 40 lines naming each tool, its cost class, its bound, and the call order. Publishes no archive content. |
-| `DRAFT-REQ-MCP-ARC-08` | draft | Pattern mode `Regex`. Split out of `REQ-MCP-ARC-03` / `-05` because it is blocked on the absent `regex` crate — [`02` §4.2](./02-amendment-1.md#42-regex--globset--replace-do-not-defer). |
+| `DRAFT-REQ-MCP-ARC-08` | draft | Pattern mode `Regex`. Split out of `REQ-MCP-ARC-03` / `-05` because it is blocked on the absent `regex` crate — [`02` §4.2](./01-decision-record.md#54-dependency-rulings). |
 
 ### Draft — `docs/requirements-draft.md` (planned)
 
@@ -165,21 +164,17 @@ Decided in [`01` §3](./01-decision-record.md#3-requirement-quality), not yet ap
 `traceability-matrix.md:65` silently includes draft `DRAFT-REQ-MCP-07` — the defect that
 prompted this whole restructure.
 
-## 7. Family 4 — `DGM-*`
+## 7. Family 4: DGM, retired unissued
 
-All unprefixed, all committed. One file each, named `docs/diagram-<ID>.md`.
+The restructure originally proposed a fourth family of diagram indices, one per file, named
+`docs/diagram-<ID>.md`: `DGM-ARCHIVE`, `DGM-SERVER`, `DGM-RES`, `DGM-CLI`, `DGM-ANALYSIS`,
+`DGM-ARTIFACTS`.
 
-| ID | File | Elements depicted |
-| --- | --- | --- |
-| `DGM-ARCHIVE` | `docs/diagram-DGM-ARCHIVE.md` | `ARCH-ARCHIVE` |
-| `DGM-SERVER` | `docs/diagram-DGM-SERVER.md` | `ARCH-MCP-SRV` |
-| `DGM-RES` | `docs/diagram-DGM-RES.md` | `DRAFT-ARCH-MCP-RES` |
-| `DGM-CLI` | `docs/diagram-DGM-CLI.md` | `ARCH-CLI-FLAGS` |
-| `DGM-ANALYSIS` | `docs/diagram-DGM-ANALYSIS.md` | `DRAFT-ARCH-ANR` … `DRAFT-ARCH-CPU` |
-| `DGM-ARTIFACTS` | `docs/diagram-DGM-ARTIFACTS.md` | `DRAFT-ARCH-CORE-ART`, `DRAFT-ARCH-SUPPORT` |
-
-`DGM-RES` is a single node and gets its own file anyway: it needs a home that is not
-`DGM-SERVER`, because folding it back in is what created the original conflict.
+**It was never minted, and no ID is now reserved.** The canvases ended up named by concern
+instead — [`../diagrams/`](../diagrams/index.md) — which needs no new prefix and no new family. The
+reasoning that would have justified leaving `DGM-*` unprefixed still holds and is worth keeping: a
+diagram is a structural index into a document, not a component, so prefixing it would mark the
+specification itself draft and destroy the ability to _specify_ draft work.
 
 ## 8. Link targets
 
@@ -189,16 +184,14 @@ that document links back.
 
 | Prefix | Lives in | Anchor form |
 | --- | --- | --- |
-| `REQ-*`, `DRAFT-REQ-*` | [`requirements.md`](../requirements.md), [`requirements-draft.md`](../requirements-draft.md) *(planned)* | `#req-gen-01`, `#draft-req-gen-03` |
-| `ARCH-*`, `DRAFT-ARCH-*` | [`architecture.md`](../architecture.md) *(restructure pending)* | `#arch-archive`, `#draft-arch-anr` |
-| `UC-*`, `DRAFT-UC-*` | [`use-cases.md`](../use-cases.md) *(restructure pending)* | `#uc-01`, `#draft-uc-03` |
-| `DGM-*` | `docs/diagram-<ID>.md` *(planned)* | `#dgm-archive` |
-| `CLS-*` | `docs/classes.md` *(planned)* | `#cls-archive` |
-| `SEQ-*` | `docs/sequences.md` *(planned)* | `#seq-startup` |
+| `REQ-*`, `DRAFT-REQ-*` | [`requirements.md`](../requirements.md) and [`draft/requirements.md`](../draft/requirements.md); indexed in [`diagrams/index.md`](../diagrams/index.md) | `#req-gen-01`, `#draft-req-gen-03` |
+| `ARCH-*`, `DRAFT-ARCH-*` | [`architecture.md`](../architecture.md) | `#arch-archive`, `#draft-arch-anr` |
+| `UC-*`, `DRAFT-UC-*` | [`use-cases.md`](../use-cases.md) | `#uc-01`, `#draft-uc-03` |
+| `CLS-*`, `SEQ-*`, `ACT-*` | not redrawn; see [`../diagrams/index.md` §5](../diagrams/index.md#5-not-depicted) | — |
 
-Files marked _planned_ do not exist yet. Their creation is specified in
-[`08-doc-restructure-manifest.md`](./08-doc-restructure-manifest.md). **No link in this design
-set points at an unlisted target** — every planned file appears in the manifest.
+`CLS-*`, `SEQ-*`, and `ACT-*` remain unissued; no element carries them.
+
+**No link in this design set points at an unlisted target.**
 
 **IDs are stable.** An ID is never reused for a different thing, and a withdrawn element keeps
 its ID with its row marked withdrawn or superseded.

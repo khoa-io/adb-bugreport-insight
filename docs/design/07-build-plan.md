@@ -2,6 +2,11 @@
 
 Two engineers, disjoint write scopes, one shared file with a single owner.
 
+> **Status: COMPLETE.** Stages 0 through 6, including 5.5, shipped in Sprint 1. This file is kept
+> as the record of how the work was divided and why, not as a plan. Note that the crate name below is
+> `crates/archive` because that was the name in force when the plan was written; the crate was
+> rebuilt as `crates/core` — see [`01` §5.3](./01-decision-record.md#53-the-deleted-crates-tree-is-intentional).
+
 ## 1. Roles and write scopes
 
 - **Engineer A — Sage.** Infrastructure. `crates/archive/**`.
@@ -99,7 +104,7 @@ proceeds.
 `src/main.rs` (stdio, ctrl-C, EOF), and the `Cargo.lock` entries.
 
 **Only this one commit is blocked.** See
-[`02` §4.4](./02-amendment-1.md#44-rmcp-version--pinned-by-request-blocked-with-a-working-fallback).
+[`02` §4.4](./01-decision-record.md#54-dependency-rulings).
 
 ## 5. Acceptance tests
 

@@ -30,7 +30,7 @@ pub struct EntryMeta {
 }
 
 /// Raw MS-DOS packed fields. No calendar interpretation, no timezone claim.
-/// zip's optional `time` feature is absent offline — see 02-amendment-1.md §4.6.
+/// zip's optional `time` feature is absent offline — see 01-decision-record.md §5.4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModifiedStamp {
     pub dos_date: u16,
@@ -291,7 +291,7 @@ pub enum StoppedReason {
 
 `regex` and `globset` are both absent from the offline cache, and no glob crate of any name is
 available. `Literal` and `Glob` are therefore hand-written — see
-[`02` §4.2](./02-amendment-1.md#42-regex--globset--replace-do-not-defer) for why regex alone is
+[`02` §4.2](./01-decision-record.md#54-dependency-rulings) for why regex alone is
 deferred rather than hand-written.
 
 **One real correctness trap:** the glob must be **segment-wise, not character-wise**. Otherwise
@@ -330,7 +330,7 @@ pub enum ArchiveNote { ArchiveFormat0, ContainsNul, EntriesCapped, Sha256Omitted
 ```
 
 `format_version` is **read verbatim and never parsed or branched on**, matching
-`artifact-schemas.md` §2.1.2. Absence means format 0 and is reported, never defaulted.
+`../draft/artifact-schemas/conventions-envelope.md §2.1.2. Absence means format 0 and is reported, never defaulted.
 
 `sha256` uses `ring`, not `sha2` — `sha2` is absent and `ring 0.17.14` was verified against the
 NIST vector for `"abc"`. See
@@ -344,7 +344,7 @@ envelope; it does not define it. Engineer B needs it to compile the tool layer.
 
 ```rust
 /// Four-value projection of the draft eight-value SectionStatus
-/// (artifact-schemas.md §2.2):
+/// (docs/draft/artifact-schemas/conventions-envelope.md §2.2):
 ///     ok -> Ok,  empty -> Empty,  not_found -> NotFound,  unreadable -> Unreadable
 /// The four skipped_* values arrive with DRAFT-REQ-ART-*.
 /// See docs/mcp-protocol.md for the full projection table.

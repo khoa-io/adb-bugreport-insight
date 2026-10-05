@@ -1,6 +1,7 @@
 # 06 — Hostile-archive behaviour
 
-`artifact-schemas.md:87-90` records one hostile archive. Assume every archive is hostile.
+[`conventions-envelope.md`](../draft/artifact-schemas/conventions-envelope.md) records one hostile
+archive. Assume every archive is hostile.
 
 | Measured on the reference archive | Value |
 | --- | --- |
@@ -22,7 +23,7 @@
 | **Central directory lies** | 10,000 entries declared, 4 GB appended: at open, assert `file_size() <= MAX_ARCHIVE_FILE_BYTES` (2 GiB) and record `declared_entry_count` separately from what was walked. |
 | **Encrypted entry** | `EntryEncrypted`, surfaced as `Unreadable`. **Never** as an empty result. |
 | **Nested archives** | `entry_info` reports nested status via magic bytes on the first 8 KiB of **decompressed** data (`PK\x03\x04`, `\x1f\x8b`, `BZh`, `\xFD7zXZ`, `7z\xBC\xAF`). **v1 detects and reports; it does not open.** Opening belongs to `DRAFT-REQ-GEN-03`. |
-| **`version.txt`** | Read verbatim, stripped, **capped at 256 bytes**, exposed as `format_version: String | null`. **Never parsed into a number, never branched on** — matching `artifact-schemas.md` §2.1.2. Absent gives `null` plus `notes: ["ARCHIVE_FORMAT_0"]`. |
+| **`version.txt`** | Read verbatim, stripped, **capped at 256 bytes**, exposed as `format_version: String | null`. **Never parsed into a number, never branched on** — matching [`conventions-envelope.md`](../draft/artifact-schemas/conventions-envelope.md) §2.1.2. Absent gives `null` plus `notes: ["ARCHIVE_FORMAT_0"]`. |
 | **`main_entry.txt`** | Read verbatim, capped the same way. Never interpreted. |
 
 ## 2. The line bomb is the design driver

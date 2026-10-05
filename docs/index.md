@@ -1,17 +1,16 @@
 # bugreport-insight
 
-A read-only [MCP](https://modelcontextprotocol.io) server over an Android
-`adb bugreport` ZIP archive. One process opens one archive in place and serves
-it to an AI agent over stdio. Nothing is extracted, written, or modified.
+A read-only [MCP](https://modelcontextprotocol.io) server over an Android `adb bugreport` ZIP archive.
+One process opens one archive in place and serves it to an AI agent over stdio. Nothing is extracted,
+written, or modified.
 
 ```console
 bugreport-insight BUGREPORT.zip --mcp
 ```
 
-The archive is opened **before** the transport starts, so a server that cannot
-see its archive exits non-zero with a diagnostic on stderr rather than
-answering as though the archive were empty. stdout carries JSON-RPC frames and
-nothing else.
+The archive is opened **before** the transport starts, so a server that cannot see its archive exits
+non-zero with a diagnostic on stderr rather than answering as though the archive were empty. stdout
+carries JSON-RPC frames and nothing else.
 
 ## The seven tools
 
@@ -27,13 +26,12 @@ Entries are addressed by `entry_id`, never by path — paths are output only.
 | `read_entry` | A bounded slice of one entry | reads bytes |
 | `grep_archive` | Content search, returning locators | scans content |
 
-Every result carries `status`, `truncated`, `stopped_reason`, `omitted_count`,
-and `notes`. `status` is one of `ok`, `empty`, `not_found`, `unreadable`: a
-failure is never shaped like a successful empty result, so `empty` always means
-the call worked and there was nothing there.
+Every result carries `status`, `truncated`, `stopped_reason`, `omitted_count`, and `notes`. `status` is
+one of `ok`, `empty`, `not_found`, `unreadable`: a failure is never shaped like a successful empty
+result, so `empty` always means the call worked and there was nothing there.
 
-Bugreports often contain sensitive information. Keep archives and any generated
-output local, and review them before sharing.
+Bugreports often contain sensitive information. Keep archives and any generated output local, and
+review them before sharing.
 
 ## Workspace
 
@@ -43,9 +41,9 @@ output local, and review them before sharing.
 | `crates/mcp` | `bugreport-insight-mcp` | The seven tools behind the `ToolHandler` seam, plus the `rmcp` adapter |
 | `crates/cli` | `bugreport-insight` (binary) | argv parsing and mode selection |
 
-`crates/core` never depends on a workspace sibling. `crates/mcp` is the only
-crate that names an `rmcp` symbol, and it does so in one adapter module — which
-is what lets the whole tool layer be unit-tested with no server running.
+`crates/core` never depends on a workspace sibling. `crates/mcp` is the only crate that names an
+`rmcp` symbol, and it does so in one adapter module — which is what lets the whole tool layer be
+unit-tested with no server running.
 
 ## Building
 
@@ -54,33 +52,37 @@ cargo build --offline
 cargo test  --offline
 ```
 
-`cargo`, `rustc`, and `rust-analyzer` all live in `~/.cargo/bin`, which is already on `PATH` on
-this machine. Verify with `~/.cargo/bin/rustc --print sysroot` →
-`/Users/p2p/.rustup/toolchains/stable-aarch64-apple-darwin`. Call the binaries by absolute path
-anyway when a command has to be unambiguous about which toolchain it used.
+`cargo`, `rustc`, and `rust-analyzer` all live in `~/.cargo/bin`, already on `PATH` on this machine.
+Verify with `~/.cargo/bin/rustc --print sysroot` →
+`/Users/p2p/.rustup/toolchains/stable-aarch64-apple-darwin`. Call the binaries by absolute path anyway
+when a command has to be unambiguous about which toolchain it used.
 
-Dependencies resolve from the ordinary cargo registry cache; there is no vendored
-directory and no machine-local path in the build. See
-[`architecture.md` §8](./architecture.md#8-dependency-availability--verified-2026-10-05) for
-the dependency table and for what an offline machine needs instead.
+Dependencies resolve from the ordinary cargo registry cache; there is no vendored directory and no
+machine-local path in the build. See
+[`architecture.md` §8](./architecture.md#8-dependency-availability--verified-2026-10-05) for the
+dependency table and for what an offline machine needs instead.
 
 ## Documentation
 
+**Committed — this is what the tool does.**
+
 | Document | Source of truth for |
 | --- | --- |
-| [`requirements.md`](./requirements.md) | what the tool must do |
-| [`architecture.md`](./architecture.md) | what it is made of — crates, elements, IDs, status |
-| [`traceability-matrix.md`](./traceability-matrix.md) | which requirement maps to which element |
-| [`design/`](./design/index.md) | why the design is shaped this way |
-| [`use-cases.md`](./use-cases.md), [`requirement-diagram.md`](./requirement-diagram.md) | diagrams |
-| [`artifact-schemas.md`](./artifact-schemas.md) | draft artifact model — **not** committed |
+| [`requirements.md`](./requirements.md) | What the tool must do. 23 requirements, all implemented. |
+| [`architecture.md`](./architecture.md) | What it is made of — crates, elements, IDs, status, structural constraints. |
+| [`traceability-matrix.md`](./traceability-matrix.md) | Which requirement maps to which element. The join. |
+| [`diagrams/index.md`](./diagrams/index.md) | Requirement-to-element diagrams, with risk and verification method. |
+| [`use-cases.md`](./use-cases.md) | Use cases and their actors. |
 
-`artifact-schemas.md` is draft. A committed requirement never depends on a draft
-concept, so nothing in the committed scope is traceable into it.
+**Draft — deferred work, recorded so the reasoning survives.**
 
-<!-- `classes.md`, `sequences.md`, and `activities.md` were removed during the
-     redesign: they described the previous implementation's function names and
-     crate layout, which no longer matches the committed design. The subcommand
-     crates they documented (`bugreport-insight-anr`, `-apps`, `-stacktrace`,
-     `-memory`, `-cpu`, `-subcommand-support`) were dropped; their element IDs are
-     retained as superseded per R-ID-3 but nothing implements them. -->
+| Document | Holds |
+| --- | --- |
+| [`draft/requirements.md`](./draft/requirements.md) | The 27 `DRAFT-`-prefixed requirements. |
+| [`draft/artifact-schemas/`](./draft/artifact-schemas/index.md) | Field-level schemas for the seven analysis artifacts. |
+| [`design/`](./design/index.md) | Decision records: what was decided, what was rejected, what is still open. |
+
+**50 requirements: 23 committed, 27 draft.** No committed requirement depends on a draft concept, so
+nothing in the committed scope is traceable into the draft half.
+
+`docs/index.md` is this file; it is the entry point for the whole set.

@@ -15,4 +15,5 @@ clap = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
+bugreport-insight-test-fixtures = { workspace = true }
 serde_json = { workspace = true }

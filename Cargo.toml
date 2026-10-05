@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/mcp",
     "crates/cli",
+    "crates/test-fixtures",
 ]
 
 [workspace.package]
@@ -13,6 +14,9 @@ edition = "2024"
 [workspace.dependencies]
 bugreport-insight-core = { path = "crates/core" }
 bugreport-insight-mcp = { path = "crates/mcp" }
+# Dev-dependency of `mcp` and `cli` only: the one hand-written ZIP writer both
+# integration suites build their fixtures with.
+bugreport-insight-test-fixtures = { path = "crates/test-fixtures" }
 clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

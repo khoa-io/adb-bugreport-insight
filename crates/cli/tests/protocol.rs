@@ -175,13 +175,10 @@ fn run_scripted(archive: &Path, script: &[Value], extra: &[&str]) -> std::proces
 
 // ----------------------------------------------------------------- fixtures
 
-/// Shared with `crates/mcp/tests/tools.rs` so there is exactly one ZIP writer in
-/// the tree. A second hand-rolled copy is how the central-directory header went
-/// missing two bytes once already.
-#[path = "../../mcp/tests/common/mod.rs"]
-mod common;
-
-use common::{good_archive, not_a_zip};
+// Shared with `crates/mcp/tests/tools.rs` so there is exactly one ZIP writer in
+// the tree; a second hand-rolled copy is how the central-directory header went
+// missing two bytes once already.
+use bugreport_insight_test_fixtures::{good_archive, not_a_zip};
 
 // -------------------------------------------------------------------- tests
 

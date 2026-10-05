@@ -129,7 +129,7 @@ impl ArchiveError {
 }
 
 /// Four-value projection of the draft eight-value SectionStatus
-/// (`artifact-schemas.md` §2.2).
+/// (`docs/draft/artifact-schemas/conventions-envelope.md` §2.2).
 ///
 /// `ok -> Ok`, `empty -> Empty`, `not_found -> NotFound`,
 /// `unreadable -> Unreadable`. The four `skipped_*` values arrive with

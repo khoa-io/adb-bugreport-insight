@@ -6,7 +6,7 @@
 fn main() {
     let path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "target/mcp-fixtures/good.zip".to_string());
+        .unwrap_or_else(|| "target/test-fixtures/good.zip".to_string());
     let archive = match bugreport_insight_core::Archive::open(&path) {
         Ok(a) => a,
         Err(e) => {

@@ -9,7 +9,7 @@ artefact.
 
 **Amended version.** `data_offset` is `u64` (not `Option<u64>`) and `ArchiveStatus` lives in
 this crate (not in `crates/mcp`) — see
-[`02` §5](./02-amendment-1.md#5-two-corrections-to-01-worth-restating).
+[`01` §5.4](./01-decision-record.md#54-dependency-rulings).
 
 ```toml
 # crates/archive/Cargo.toml

@@ -8,19 +8,20 @@ set, the workspace layout, and how to build.
 bugreport-insight BUGREPORT.zip --mcp
 ```
 
-<copilot-ref kind="file" target-id="docs/requirements.md" label="Requirements" />
-<copilot-ref kind="file" target-id="docs/requirement-diagram.md" label="Requirement Diagram" />
-<copilot-ref kind="file" target-id="docs/traceability-matrix.md" label="Traceability Matrix" />
-<copilot-ref kind="file" target-id="docs/artifact-schemas.md" label="Artifact Schemas (DRAFT)" />
-<copilot-ref kind="file" target-id="docs/use-cases.md" label="Use Case Diagram" />
-<copilot-ref kind="file" target-id="docs/architecture.md" label="Architecture Diagram" />
+- [`docs/requirements.md`](./docs/requirements.md) — what the tool must do
+- [`docs/diagrams/`](./docs/diagrams/index.md) — requirement-to-element diagrams
+- [`docs/traceability-matrix.md`](./docs/traceability-matrix.md) — the join between them
+- [`docs/use-cases.md`](./docs/use-cases.md) — use cases and actors
+- [`docs/architecture.md`](./docs/architecture.md) — what the tool is made of
+- [`docs/draft/`](./docs/draft/index.md) — deferred work, including the artifact schemas
 
 ## Design decisions
 
 [`docs/design/`](./docs/design/index.md) holds the accepted design for the
 redesign: the rule-1 conflict resolution, the final ID list, the core archive
-API, the offline dependency rulings, the build plan, the planned documentation
-restructure, and the open items.
+API, the offline dependency rulings, the build plan, and the open items. It is
+a **historical record** of decisions made before implementation, not a plan for
+work still to do.
 
 Start at [`design/index.md`](./docs/design/index.md). Engineers should read
 [`design/03-id-scheme.md`](./docs/design/03-id-scheme.md),

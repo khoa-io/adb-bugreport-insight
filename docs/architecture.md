@@ -17,7 +17,8 @@ Every element ID below originates here and is listed in
 ## 2. Architecture overview
 
 `bugreport-insight --mcp <archive.zip>` is a **read-only MCP server over stdio**. One process, one
-archive opened in place, no network, no database, no extraction, no persistence. Three crates.
+archive opened in place, no network, no database, no extraction, no persistence. Three shipped
+crates, plus one test-only crate that builds their fixtures.
 
 <!-- `componentDiagram` is the correct UML type for this view, but mermaid-svg 0.7.0 — the
      project's syntax gate — rejects it with "unknown diagram type". Rendered as `flowchart`
@@ -103,6 +104,13 @@ retained because IDs are never reused and a withdrawn element keeps its ID
   handing control to `crates/mcp`. It is a peer of `crates/mcp`, not a parent.
 - Therefore there is no cycle, and no crate can reach an `rmcp` symbol except `crates/mcp`'s
   adapter module.
+- `crates/test-fixtures` is the exception that proves the last rule: it holds the one hand-written
+  ZIP writer that the `mcp` and `cli` integration suites build archives with. It is a
+  **dev-dependency of `crates/mcp` and `crates/cli` and nothing else**, depends on `std` alone, and
+  reaches no workspace sibling — so it cannot influence a shipped binary's dependency graph. It
+  exists because the two suites live in different packages: a `#[path]` module reaching across a
+  package boundary resolves under `rustc` but not under rust-analyzer, which drops the module and
+  every fixture behind it.
 
 ## 5. The seven tools and the `ToolHandler` seam
 

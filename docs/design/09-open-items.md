@@ -1,10 +1,10 @@
 # 09 — Open items
 
-Re-verified 2026-10-05 against the working tree. Every item carries a verdict: **resolved**
-(with the command that proved it), **still open** (with its blocker), or **moot** (with the
-decision that settled it). Nothing is listed open on trust.
+Re-verified 2026-10-05, and again after the documentation restructure. Every item carries a verdict:
+**resolved** (with the command that proved it), **still open** (with its blocker), or **moot** (with
+the decision that settled it). Nothing is listed open on trust.
 
-**Verdict counts: 9 resolved · 3 moot · 5 still open · 1 partially resolved.**
+**Verdict counts: 14 resolved · 3 moot · 1 still open.**
 
 > **No GitHub.** Open items stay *listed, not created*, per §1 and the user directive. Work is
 > tracked as memory-bank tasks.
@@ -16,7 +16,7 @@ decision that settled it). Nothing is listed open on trust.
 | # | Original claim | Verdict | Evidence (one line) |
 | --- | --- | --- | --- |
 | 1 | `Cargo.toml` names 7 non-existent members; 7 dead `path` entries | **RESOLVED** | `Cargo.toml:3-7` = `crates/{core,mcp,cli}`; `cargo metadata --no-deps --offline` exit 0 |
-| 2 | `requirement-diagram.md:447` — `REQ-GEN-04` missing `DRAFT-` prefix | **STILL OPEN** | `:447` still reads `id: "REQ-GEN-04"`; `:586` calls the same ID `DRAFT-REQ-GEN-04` |
+| 2 | `REQ-GEN-04` was missing its `DRAFT-` prefix in the requirement diagram | **RESOLVED** | `diagrams/req-draft-artifacts.md` carries `id: "DRAFT-REQ-GEN-04"`, matching `draft/requirements.md` and the index row |
 | 3 | `traceability-matrix.md:65` — `UC-01` range includes draft `DRAFT-REQ-MCP-07` | **RESOLVED** | `traceability-matrix.md:84` enumerates 20 IDs, none `DRAFT-`; no `…` anywhere in file |
 | 4 | `traceability-matrix.md:38` — "three mixed rows" | **RESOLVED** | `grep -ci mixed` → **0**; 14 arch rows, all ✅ or 🚧 |
 | 5 | `architecture.md:53,62,96` — impossible `ripgrep` dependency | **MOOT** | User chose `grep-*` crates; declared in `Cargo.toml:20-24`, vendored |
@@ -24,14 +24,14 @@ decision that settled it). Nothing is listed open on trust.
 | 7 | `REQ-GEN-02`, `REQ-MCP-06` carry no numbers | **RESOLVED** | `requirements.md:27` gives 10,000 / 256 MiB / 1 GiB / 2 GiB; `:73` gives 200 / 50 / 32 MiB |
 | 8 | `REQ-MCP-09` vacuous against the committed tools | **RESOLVED** | `requirements.md:81` names `entry_id`, `text|binary|nested_zip`, 512-byte cap — all committed |
 | 9 | `REQ-MCP-05` claims a test it cannot have | **RESOLVED** | `requirements.md:72` scopes the claim to a `tools/list` regression test; deps now present |
-| 10 | No implementing element for `REQ-GEN-01` / `REQ-GEN-02` | **RESOLVED** | `requirement-diagram.md:74-75` — `zip_reader - satisfies -> read_only_zip` / `safety_limits` |
-| 11 | `docs/index.md` uses `<copilot-ref/>` pseudo-tags | **STILL OPEN** | `docs/index.md:1-6` — six `<copilot-ref/>` lines, unchanged |
-| 12 | Root `README.md` documents the deleted tree | **STILL OPEN** | `README.md:31` still `scan_anrs()`; `:39` still `bugreport-insight-subcommand-support` |
+| 10 | No implementing element for `REQ-GEN-01` / `REQ-GEN-02` | **RESOLVED** | `diagrams/req-core-library.md` — `zip_reader - satisfies -> read_only_zip` / `safety_limits` |
+| 11 | `docs/index.md` used `<copilot-ref/>` pseudo-tags | **RESOLVED** | Replaced with ordinary Markdown links; `grep -r copilot-ref docs/` → no match |
+| 12 | Root `README.md` documented the deleted tree | **RESOLVED** | Rewritten; `grep -E 'scan_anrs\|subcommand' README.md` → no match |
 | 13 | `.memory-bank/` is globally gitignored | **RESOLVED (evidence corrected)** | `git check-ignore -v .memory-bank` → `/Users/p2p/.gitignore_global:10:.memory-bank/` |
-| 14 | `artifact-schemas.md` is 4,973 lines | **STILL OPEN** | `wc -l` → **4973**, exact; entirely draft, no diagrams, off the critical path |
+| 14 | The artifact schemas were 4,973 lines in one file | **RESOLVED** | Split by its own sections into `draft/artifact-schemas/`, 16 files, largest 483 lines |
 | 15 | **`crates.io` unreachable** — `rmcp`, `schemars`, `regex`, `globset`, `sha2` absent | **RESOLVED (was false)** | All present — see §2. `tracing-subscriber` is the only one genuinely absent |
 | 16 | Hand-written glob and literal search need review | **MOOT** | Superseded by #5: `grep-matcher`/`grep-searcher`/`grep-regex`/`grep-printer` replace it |
-| 17 | `ring` used instead of `sha2` | **MOOT** | User decision + `sha2 0.10.9` cached; neither crate is in `Cargo.toml` yet |
+| 17 | `ring` used instead of `sha2` | **MOOT** | Settled on `sha2 0.10.9`; `crates/core/Cargo.toml` declares it directly and `identity.rs` uses `sha2::Sha256`. `ring` never entered the manifest |
 | 18 | `zip/time` absent → `mtime` is raw MS-DOS fields | **STILL OPEN (reason corrected)** | `time 0.3.37` is absent from cache and vendor; `zip/chrono` is an untested alternative |
 
 ---
@@ -63,7 +63,7 @@ Extracted sources agree — same set under `~/.cargo/registry/src/*/`.
 **`tracing-subscriber` is genuinely absent.** `tracing 0.1.44`, `tracing-core`, and
 `tracing-attributes` are present, but without a subscriber `tracing` emits nothing. The practical
 consequence is unchanged and is already recorded in
-[`02` §4.5](./02-amendment-1.md): log to **stderr** via `eprintln!`. Stdout is protocol-only.
+[`02` §4.5](./01-decision-record.md#5-amendment-1--folded-in): log to **stderr** via `eprintln!`. Stdout is protocol-only.
 
 **The cache is not small.** 291 `.crate` files, not the 65 a previous agent reported from the
 wrong machine.
@@ -224,7 +224,7 @@ The live consequences:
 | Location | Stale claim | Action |
 | --- | --- | --- |
 | `requirements.md:82` | "speaks MCP over stdio (`rmcp` 0.8.5, verified present in the offline cache)" | **Version and evidence both wrong.** 3.5.0 is declared; 0.8.5's presence does not verify it |
-| [`02` §4](./02-amendment-1.md) | Engineer B cannot write `rmcp` code; tool layer is written against a local trait | Blocked-on-`rmcp` framing is stale — the blocker is 3.5.0 arriving, not `rmcp` being absent |
+| [`02` §4](./01-decision-record.md#5-amendment-1--folded-in) | Engineer B cannot write `rmcp` code; tool layer is written against a local trait | Blocked-on-`rmcp` framing is stale — the blocker is 3.5.0 arriving, not `rmcp` being absent |
 | `docs/architecture.md:70` | `mcp` depends on `rmcp`, status ✅ | Consistent, but the element ID is pre-split (see §8) |
 
 The `.agents/instructions/rust-mcp-server.instructions.md` file is already correct for 3.x and
@@ -359,8 +359,8 @@ The fourteen live element anchors match between the two documents. The four R-ID
 old links still resolve while the live set stays at fourteen.
 
 The matrix rebuild (SWE.1-T2) is **done**: `grep -ci mixed` → **0**, no `…` ranges anywhere, and
-counts verified at **23 committed / 25 draft / 48 total** — `Count` column sums to 48 across 30
-rows, matching `03-id-scheme.md:109`.
+counts verified at **23 committed / 27 draft / 50 total** — the coverage table sums to 50 across 17
+rows, matching `03-id-scheme.md` §5.
 
 ---
 
@@ -370,7 +370,7 @@ Deferred ≠ open. These are records of deliberate postponement, not defects.
 
 | Deferred | Why it can wait |
 | --- | --- |
-| Splitting `artifact-schemas.md` | No diagrams, so rule 4 does not apply; entirely draft; off the critical path (item 14) |
+| Splitting the artifact schemas | **Done** — see item 14 and `draft/artifact-schemas/` |
 | Opening nested archives | `REQ-MCP-ARC-06` promises only _detection_; opening is `DRAFT-REQ-GEN-03` |
 | Progress notifications | Bounded by scan budget instead |
 | Prompts and `logging` capabilities | No handler means no advertisement |
@@ -385,7 +385,7 @@ Deferred ≠ open. These are records of deliberate postponement, not defects.
 | Was deferred | Now | Why |
 | --- | --- | --- |
 | `PatternMode::Regex` behind `DRAFT-REQ-MCP-ARC-08` | **Deferred on scope, not availability** | `regex 1.13.1` **is** cached and `grep-regex` is vendored. Availability was never the blocker — committing the requirement is. SA decides. |
-| `sha2` swap for `ring` | **Settled: `sha2`** | `sha2 0.10.9` cached; pure Rust, no C toolchain. Neither is in `Cargo.toml` yet (item 17) |
+| `sha2` swap for `ring` | **Settled and shipped: `sha2`** | `crates/core/Cargo.toml` declares `sha2 0.10.9` directly; `identity.rs` computes the digest with `sha2::Sha256`. `ring` was never added (item 17) |
 | `tracing-subscriber` | **Settled: unavailable** | Genuinely absent. Log to stderr via `eprintln!` |
 
 ---
@@ -395,10 +395,14 @@ Deferred ≠ open. These are records of deliberate postponement, not defects.
 **`REQ-MCP-10`'s `verifymethod`.** Previously flagged because `rmcp` was absent from the cache.
 
 That premise was false (item 15). `rmcp` is available, so **Option A stands**: `REQ-MCP-10` keeps
-`verifymethod: test`. Confirmed unchanged in `requirement-diagram.md:159` and `:562`.
+`verifymethod: test`. Confirmed in `diagrams/index.md` and on the canvas in
+`diagrams/req-mcp-server.md`.
 
-**But the sentence justifying it in `requirements.md:82` now cites the wrong version** (`0.8.5`
-against a declared `3.5.0`) — see P4. The ruling is right; its recorded reason needs updating.
+**The sentence that justified it cited the wrong version** (`0.8.5` against a declared `3.5.0`) —
+that sentence is gone. The requirement now names no version at all, which is the correct level of
+detail for a specification: the version belongs to `Cargo.toml`, and
+[`../architecture.md` §8](../architecture.md#8-dependency-availability--verified-2026-10-05) records
+which one is declared.
 
 The reasoning that motivated the ruling stands as guidance: a requirement marked `test` that cannot
 be tested is a small lie, and this project has been bitten by documentation claiming things the

@@ -16,9 +16,10 @@ use serde_json::{Value, json};
 
 // ---------------------------------------------------------------- fixtures
 
-mod common;
-
-use common::{corrupt_entry_archive, good_archive};
+// The ZIP writer behind every fixture lives in `crates/test-fixtures`: one copy
+// for both suites, because a second hand-rolled copy is how the
+// central-directory header went missing two bytes once already.
+use bugreport_insight_test_fixtures::{corrupt_entry_archive, good_archive};
 
 fn archive(path: &Path) -> Arc<Archive> {
     Arc::new(Archive::open(path).expect("fixture archive must open"))

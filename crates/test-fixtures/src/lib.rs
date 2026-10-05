@@ -1,17 +1,26 @@
-//! Shared fixture helpers for the MCP test suites.
+//! Shared ZIP fixtures for the `mcp` and `cli` test suites.
 //!
-//! One ZIP writer, used by both `tools.rs` and `protocol.rs`. Two hand-rolled
-//! writers drifted: the central-directory header is 46 bytes before the name,
-//! and a copy that writes 44 produces an archive `zip` rejects with
-//! `InvalidArchive` — which surfaces as `NotAZipArchive`, not as a clear test
-//! failure. Keeping one copy means a field cannot be missed in only one suite.
-
-#![allow(dead_code)]
+//! **Why there is exactly one copy.** Two hand-rolled writers drifted: the
+//! central-directory header is 46 bytes before the name, and a copy that writes
+//! 44 produces an archive `zip` rejects with `InvalidArchive` — which surfaces as
+//! `NotAZipArchive`, not as a clear test failure. Keeping one copy means a field
+//! cannot be missed in only one suite.
+//!
+//! **Why this is a crate rather than a `#[path]` module.** Both suites need it
+//! and they live in different packages. A `#[path = "../../mcp/…"]` module
+//! resolves under `rustc` but not under rust-analyzer, which reports it as an
+//! unresolved module and then loses every fixture behind it. A `dev-dependency`
+//! resolves identically in both tools and is checked by cargo itself.
+//!
+//! Reachable from test builds only: this is a dev-dependency of `crates/mcp` and
+//! `crates/cli` and of nothing else.
 
 use std::path::PathBuf;
 
 pub fn scratch_dir() -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/mcp-fixtures");
+    // This crate sits at `crates/<name>/`, so two levels up is the workspace
+    // root and `target/` is shared with every other suite.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-fixtures");
     std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
@@ -44,6 +53,12 @@ pub struct ZipBuilder {
     buf: Vec<u8>,
     central: Vec<u8>,
     count: u16,
+}
+
+impl Default for ZipBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ZipBuilder {

@@ -1,19 +1,23 @@
 # 01 — Design Decision Record
 
-**Status:** accepted, amended by [`02-amendment-1.md`](./02-amendment-1.md)
+**Status:** accepted, and amended — Amendment 1 is folded into §5 below
 **Applies to:** the `bugreport-insight` redesign, committed path only
 **Author role:** Principal Software Engineer
 
-This is the original decision record. Where Amendment 1 corrects it, **the amendment wins and
-only the amended form appears in [`03`](./03-id-scheme.md) through
-[`07`](./07-build-plan.md)**. What a correction *changed and why* is recorded here in the
-rationale, so the reasoning survives even though the stale conclusion does not.
+This is the original decision record, with Amendment 1 folded in. Where Amendment 1 corrected it,
+**the amended form is authoritative** and is what appears in [`03`](./03-id-scheme.md) through
+[`07`](./07-build-plan.md) and in the shipped code. What a correction *changed and why* is recorded
+here in the rationale, so the reasoning survives even though the stale conclusion does not.
 
 Three corrections landed in Amendment 1 and are called out inline below:
 
 1. `EntryMeta.data_offset` is `u64`, not `Option<u64>` — `ZipFile::data_start()` is public.
-2. `ArchiveStatus` lives in `crates/archive`, not `crates/mcp`.
+2. `ArchiveStatus` lives in the archive crate, not in `crates/mcp`.
 3. Stage 1 does not require `rmcp`.
+
+The crate name `crates/archive` is used throughout this record because it was the name in force when
+the decision was taken. It was later rebuilt as `crates/core`; see §5.3 and
+[`architecture.md` §3](../architecture.md#31-committed).
 
 ---
 
@@ -22,7 +26,7 @@ Three corrections landed in Amendment 1 and are called out inline below:
 ### The conflict
 
 Rule 1 says a component whose requirement is draft is draft, with no mixed status.
-`ARCH-MCP` has [`DRAFT-REQ-MCP-07`](../requirements.md#draft-req-mcp-07) attached, so rule 1
+`ARCH-MCP` has [`DRAFT-REQ-MCP-07`](../draft/requirements.md#draft-req-mcp-07) attached, so rule 1
 marks the whole MCP crate draft — but the MCP server is needed *now*. The same collision hits
 `ARCH-CORE` (committed archive half, draft artifact half, one crate) and `ARCH-CLI` (three
 committed flags, draft command and toggles).
@@ -82,7 +86,7 @@ misrepresent the roadmap. It is **re-homed** instead, to `DRAFT-ARCH-MCP-RES`. S
 
 ### The consequence
 
-The element split is tabulated in [`03` §3](./03-id-scheme.md#3-family-2-arch). Thirteen live
+The element split is tabulated in [`03` §3](./03-id-scheme.md#3-family-2--arch-). Thirteen live
 elements: 4 ✅, 9 🚧.
 
 ### Two live defects this fixes
@@ -96,13 +100,16 @@ elements: 4 ✅, 9 🚧.
   mixed. Four marks in one document, three in another, none agreeing. The split deletes the
   category and with it the disagreement.
 
-### One defect rule 1 does not excuse
+## One defect rule 1 does not excuse — since fixed
 
-`requirement-diagram.md:447` declares `id: "REQ-GEN-04"`. Every other document says
-`DRAFT-REQ-GEN-04` (`requirements.md:29`, `requirement-diagram.md:530,586`,
-`traceability-matrix.md:33,48,67,68,70`). The diagram's node therefore claims a **committed**
-requirement, which by rule 1 makes the artifact writer committed — while the index row on the
-same page calls it draft. One missing prefix; it silently reclassifies an entire element.
+The requirement diagram declared `id: "REQ-GEN-04"` where every other document said
+`DRAFT-REQ-GEN-04`. The diagram's node therefore claimed a **committed** requirement, which by rule 1
+made the artifact writer committed — while the index row on the same page called it draft. One
+missing prefix; it silently reclassified an entire element.
+
+**Fixed** during the restructure: the node is now `DRAFT-REQ-GEN-04` in
+[`../diagrams/req-draft-artifacts.md`](../diagrams/req-draft-artifacts.md), and the requirement text
+itself moved to [`../draft/requirements.md`](../draft/requirements.md).
 
 ---
 
@@ -145,7 +152,7 @@ Unspecified anywhere in `docs/`. Decisions, with the reasoning that is not obvio
 | progress notifications | **Not in v1.** `grep_archive` is the only slow call and is bounded by a scan budget instead. `rmcp`'s `notify_progress` adds protocol surface with no consumer. |
 
 **Corrected in Amendment 1:** logging does not use `tracing`, because `tracing-subscriber` is
-absent from the offline cache. See [`02` §3.5](./02-amendment-1.md#35-tracing-subscriber-absent).
+absent from the offline cache. See [§5.4](#54-dependency-rulings).
 
 ### 2.3 One archive, seven tools, no lock — must precede the build
 
@@ -242,8 +249,7 @@ wire-format constant in seven tools once they ship.
 
 "A tool that no backing capability justifies does not exist" is a design principle;
 `verifymethod: test` is a lie about it. Replace the testable half and delete the
-philosophical clause — §[04](./02-amendment-1.md) of the tool surface adds the `instructions`
-guide that makes the principle real.
+philosophical clause — the added `instructions` requirement makes the principle real.
 
 ### 3.4 `REQ-MCP-09` — not enforceable for raw archive tools as written
 
@@ -266,7 +272,7 @@ is tested on four fixtures: success, zero matches, missing entry, corrupt-deflat
 | `REQ-MCP-01` | "It depends on `core` and the analyzer crates" re-couples the server to draft crates | Committed dependency set is `bugreport-insight-archive` and `rmcp`. Analyzer dependencies are `DRAFT-` and recorded as such. |
 | `REQ-MCP-03` | Dangling cross-reference to `REQ-GEN-01`, which states no limits | Repoint to `REQ-GEN-02` alone. |
 | `REQ-MCP-04` | Correct but only inspectable | Add: a test asserts the archive's SHA-256 and mtime are unchanged after a full sweep. |
-| `REQ-MCP-10` | "optional **and** out of scope" — self-contradictory | "SSE and HTTP transports are not part of this requirement set and are not implemented." **See the open ruling in [`09` §3](./09-open-items.md#3-the-one-ruling-i-did-not-make).** |
+| `REQ-MCP-10` | "optional **and** out of scope" — self-contradictory | "SSE and HTTP transports are not part of this requirement set and are not implemented." **See the closed ruling in [`09` §10](./09-open-items.md#10-the-one-ruling-i-did-not-make--now-closed).** |
 | `REQ-MCP-ARC-04` | "line range **or** byte range" is a union-typed parameter set an agent can get wrong | One tool, two explicitly-named mutually-exclusive pairs. **Addressing key becomes `entry_id`, not `path`.** |
 | `REQ-MCP-ARC-05` | Typed `performanceRequirement` while its six siblings are `interfaceRequirement` | Reclassify to `interfaceRequirement`; performance belongs to `REQ-MCP-06`. **Add `byte_offset` to every match.** |
 | `REQ-MCP-ARC-06` | "detected content type" is defined in **no document anywhere** | Add the `ContentType` (15 values) and `DetectionBasis` (4 values) enums, `sample_bytes`, and the rule that a type is emitted only when `basis != none`. |
@@ -306,8 +312,9 @@ each tool, its cost class, its bound, and the intended call order. Published via
 capability that already exists, publishing no archive content, and materially improving agent
 success.
 
-**`DRAFT-REQ-MCP-ARC-08`** — pattern mode `Regex`, split out in Amendment 1 because it is
-blocked on the absent `regex` crate. See [`02` §3.2](./02-amendment-1.md#32-regex-and-globset--replace-do-not-defer).
+**`DRAFT-REQ-MCP-ARC-08`** — pattern mode `Regex`, split out in Amendment 1. It was originally
+blocked on an absent `regex` crate; that turned out to be false, and the deferral is now on scope
+rather than availability. See [§5.4](#54-dependency-rulings).
 
 These change the tally to **23 ✅ / 25 🚧 / 48**, from 22 / 24 / 46.
 
@@ -354,73 +361,105 @@ unusable tool on the reference archive.
 
 Both have the same answer shape: **a committed requirement must not name a draft concept.**
 That is rule 1 applied to requirement text rather than element status.
-
 ---
 
-## 5. Doc restructure plan
+## 5. Amendment 1 — folded in
 
-**Superseded in detail by [`08-doc-restructure-manifest.md`](./08-doc-restructure-manifest.md),
-which is the authoritative manifest.** This section records why the restructure was decided.
+Amendment 1 (accepted 2026-10-04) recorded two user rulings and one environmental blocker. It is
+folded in here rather than kept beside this file, because every one of its rulings has since been
+either implemented or overtaken — and a decision record superseded by the code it describes is
+history, not guidance.
 
-Rule 4's trigger: `requirement-diagram.md` is 602 lines with six canvases. `artifact-schemas.md`
-is 4,973 lines but has no diagrams, so rule 4 does not apply to it.
+### 5.1 The `DRAFT-` prefix on component IDs
 
-Rule 3 forces UML types: `flowchart TD` in `architecture.md` becomes a component diagram; the
-one in `use-cases.md` becomes a usecase diagram. The six existing `requirementDiagram` canvases
-are already correct UML and stay.
+Status is legible **from the ID alone**, in every ID family:
 
-**Naming.** The user's rule 4 names the split form `-diagram-<ID>.md`. The base document is
-itself called `requirement-diagram.md`, so applying the rule literally yields
-`requirement-diagram-diagram-*.md`. The naming `docs/diagram-<ID>.md` was proposed and
-**accepted**, delivering what the rule intends without the stutter.
+> **`DRAFT-<KIND>-<NAME>`** — the prefix is part of the identity, not a decoration. A `DRAFT-` ID is
+> draft whatever document it lives in and whatever its status column says; an unprefixed ID asserts
+> committed scope.
 
-**`docs/activities.md` is retired, not revived.** An activity diagram models workflow and
-decision logic. There is no committed workflow beyond "serve MCP over stdio" — that is a
-state diagram. Reviving it would produce a document of invented filler.
+Nine components and four use cases carry it; six element IDs and two use cases do not, because they
+map to committed requirements. A diagram ID is deliberately unprefixed: it indexes a document rather
+than naming a component, and prefixing them would mark the specification itself draft — losing the
+ability to *specify* draft work, which is the whole point of having a draft.
 
-**A new ID prefix is required by rule 4**, which the docs previously lacked: every diagram
-gets a `DGM-*` ID, because otherwise there is nothing to name a file after.
+### 5.2 Rule R-ID-3 — a superseded ID never changes form
 
----
+> **Rule R-ID-3:** A `DRAFT-` prefix is applied **once**, when an element ID is minted, and never
+> modified. A retired element keeps its original ID, unaltered, with its row marked
+> `superseded by <new ID>`.
+>
+> **Corollary:** whether a superseded element was draft or committed is recorded in **its row's
+> status cell**, not in its ID — because a superseded row's status cell is historical text, not a
+> live claim.
 
-## 6. Build order
+A superseded ID is a historical record. Changing `ARCH-MCP` to `DRAFT-ARCH-MCP` would falsify it,
+asserting something about a document that no longer exists in order to describe a decision made
+later. The question never in fact arose: all four superseded IDs were committed at retirement, and
+each has a committed successor. They are listed in
+[`architecture.md` §9](../architecture.md#9-superseded-ids--rule-r-id-3).
 
-**Authoritative and current in [`07-build-plan.md`](./07-build-plan.md).** Three things from
-the original plan were corrected in Amendment 1:
+### 5.3 The deleted `crates/` tree is intentional
 
-1. Stage 0 does **not** commit the `crates/` deletion — the deletion is the user's intended
-   end state and is not a task.
-2. Stage 1 does **not** require `rmcp`. Engineer B builds the entire seven-tool layer behind a
-   local `ToolHandler` trait.
-3. A new **Stage 5.5** exists solely for the `rmcp` integration, and it is the only blocked
-   stage.
+**The deletion was the intended end state. Do not restore it. Do not "commit it" as a task.** A
+future reader — human or agent — may notice a deleted tree against a manifest that names it and
+"helpfully" restore it. Do not. `crates/anr`, `crates/apps`, `crates/stacktrace`, `crates/memory`,
+`crates/cpu`, and `crates/support` were deleted because every one implements draft requirements;
+restoring them would drag ~2,000 lines of artifact code into a committed build and defeat the
+crate-boundary decision in §2.1.
 
-The original Stage 0 also assumed a green build existed. It does not: `crates/` is deleted in
-the working tree and `Cargo.toml:3-12` names seven non-existent members. `progress.md:130`
-claims a green build with 13/13 tests passing, which is false as of 2026-10-04.
+This ruling is now historical in one respect: `crates/core` exists again, recreated fresh to hold the
+committed archive capability. It contains no artifact code. The analyzer crates stay deleted.
 
----
+### 5.4 Dependency rulings
+
+The offline-cache constraint drove five rulings. Current dependency state is
+[`architecture.md` §8](../architecture.md#8-dependency-availability--verified-2026-10-05), which is
+established by building each dependency, not by reading a manifest.
+
+| Ruling | Outcome |
+| --- | --- |
+| Hand-write `Literal` and `Glob`; defer `Regex` | **Held.** `crates/core/src/glob.rs` ships both. `PatternMode::Regex` returns a typed `pattern_mode_unavailable`, never a silent fallback to literal — an agent asking for regex gets a truthful answer rather than a wrong result. |
+| Use `ring` for SHA-256, swap to `sha2` later | **Overtaken.** `sha2` turned out to be cached, so `ring` was never needed; `crates/core` declares `sha2` directly. |
+| No logging framework; `eprintln!` to stderr | **Held.** `crates/mcp/src/diag.rs` honours `--verbose` and cannot reach stdout by construction, which strengthens the stdout-purity guarantee in `REQ-MCP-10`. |
+| `rmcp` fetched separately; Stage 1 must not require it | **Held, then moot.** Stage 1 built the whole tool layer behind the `ToolHandler` trait exactly as planned; `rmcp 3.5.0` later resolved and the adapter landed as one thin shim. |
+| `mtime` stays raw MS-DOS fields | **Held.** `zip`'s `time` feature is still absent, so `EntryMeta.modified` carries `ModifiedStamp { dos_date, dos_time }` plus `modified_valid`. This is not a compromise but the more correct answer: MS-DOS stamps have 2-second granularity and no timezone, so any rendered value would be false precision. |
+
+Two corrections to §2 landed with these and are now in the code: `EntryMeta.data_offset` is `u64`
+because `ZipFile::data_start()` is public, and `ArchiveStatus` lives beside `ArchiveError` in the
+archive crate because it is the outcome of an _archive_ operation.
+
+## 6. Restructure and build order — both resolved
+
+**The documentation restructure is applied.** `requirements.md` holds the 23 committed requirements;
+the 27 draft ones moved to [`draft/`](../draft/index.md); the six requirement canvases split into
+[`diagrams/`](../diagrams/index.md); the 4,973-line artifact-schemas document split by its own
+sections into [`draft/artifact-schemas/`](../draft/artifact-schemas/index.md); and
+`project-summary.md` was deleted as a near-duplicate of `index.md`. The `DGM-*` ID family proposed in
+§5 of the old record is **not** used — the canvases are named by concern instead, which needs no new
+prefix. The missing `DRAFT-` prefix on `REQ-GEN-04` recorded in §1 is fixed.
+
+**The build order is complete.** Stages 0 through 6 shipped in a single sprint. The `crates/archive`
+name used throughout §2 is superseded by `crates/core`; the authoritative mapping is
+[`architecture.md` §3](../architecture.md#31-committed).
 
 ## 7. Deferred decisions
 
 | Deferred | Why it can wait |
 | --- | --- |
-| Splitting `artifact-schemas.md` (4,973 lines) | No diagrams, so rule 4 does not apply; entirely draft; off the committed critical path. |
-| Opening nested archives | `REQ-MCP-ARC-06` promises only _detection_. Opening is `DRAFT-REQ-GEN-03`. |
-| Progress notifications | Bounded by scan budget instead. |
-| Prompts and `logging` capabilities | No handler means no advertisement. |
+| Splitting the artifact schemas | **Done** — split into `draft/artifact-schemas/`, every file under 500 lines. |
+| Opening nested archives | `REQ-MCP-ARC-06` promises only *detection*. Opening is `DRAFT-REQ-GEN-03`. |
+| Progress notifications | Bounded by the scan budget instead. |
+| Prompts and `logging` capabilities | No handler means no advertisement; asserted in `crates/cli/tests/protocol.rs`. |
 | SSE / Streamable-HTTP transports | `REQ-MCP-10` explicitly excludes them. |
 | `process_key`, freshness, severity, negative evidence | All draft, behind `DRAFT-REQ-ART-*`. |
-| Which concrete `rmcp` 0.8.x patch version | Cannot be resolved offline; see [`02` §3.4](./02-amendment-1.md#34-rmcp-version--pinned-by-request-blocked-with-a-working-fallback). |
+| A rendered `mtime` from `zip/time` | Still open; the raw MS-DOS fields ship in the meantime. |
 | Multi-archive sessions | **Forbidden** by `REQ-MCP-02`, not deferred. Never reopens. |
-| Third-party scanner plugin dispatch (`DRAFT-UC-05`) | Draft, and the flag-over-subcommand ruling may reshape it anyway. |
-
----
+| Third-party scanner plugin dispatch (`DRAFT-UC-05`) | Draft, and the dropped `subcommand-*` approach may reshape it anyway. |
 
 ## 8. Technical debt
 
-The 18 GitHub issues are consolidated in
-[`09-open-items.md`](./09-open-items.md#1-github-issues--listed-not-created). Issues 1–14 were
-identified in this pass; issues 15–18 were added by Amendment 1 as a consequence of the
-offline cache constraint. They are **listed, not created** — creating them is a separate,
-explicitly-authorised action.
+The 18 items are consolidated in [`09-open-items.md`](./09-open-items.md#1-item-ledger), each with a
+verdict — resolved with the command that proved it, still open with its blocker, or moot with the
+decision that settled it. They are **listed, not created**; creating GitHub issues is a separate
+decision.
