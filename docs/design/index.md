@@ -6,8 +6,8 @@ implementation and are persisted here so they survive without the conversation.
 
 > **These are historical records, not a plan.** Sprint 1 is complete: all 23 committed requirements
 > are implemented and tested. Where a record describes work as "to be implemented", read it as the
-> reasoning that led to what shipped. The committed specification in [`../`](../index.md) wins
-> wherever the two disagree.
+> reasoning that led to what shipped. The committed specification in
+> [`../requirements.md`](../requirements.md) wins wherever the two disagree.
 
 The specification documents are the source of truth for *what the tool must do*. This directory is
 the source of truth for *why the design is shaped this way*.

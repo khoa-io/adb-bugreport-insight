@@ -1,8 +1,8 @@
 # Requirements
 
-The committed specification. Every ID in this file is a binding requirement; **23 of them**, and all
+<!-- The committed specification. Every ID in this file is a binding requirement; **23 of them**, and all
 23 are implemented. Requirements that describe output the tool does not produce live in
-[`draft/requirements.md`](./draft/requirements.md) and are deliberately not here.
+[`draft/requirements.md`](./draft/requirements.md) and are deliberately not here. -->
 
 Each requirement carries a stable ID and an anchor, and the visible badge next to it links to its row
 in [`diagrams/index.md`](./diagrams/index.md), the requirement-to-element index. The link runs both

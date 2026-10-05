@@ -127,7 +127,7 @@ fn unknown_parameters_are_rejected() {
     for (tool, base) in cases {
         let mut bad = base.clone();
         bad["not_a_real_parameter"] = json!(1);
-        let err = call(tool, &path, bad).expect_err("{tool} must reject unknown fields");
+        let err = call(tool, &path, bad).expect_err(&format!("{tool} must reject unknown fields"));
         assert_eq!(err.kind, ToolErrorKind::Protocol, "{tool}");
         assert_eq!(err.code, "invalid_params", "{tool}");
     }
@@ -176,7 +176,7 @@ fn envelope_always_carries_the_four_bound_fields() {
     }
 }
 
-/// `stopped_reason` is snake_case on the wire, per the `REQ-MCP-06` vocabulary.
+/// `stopped_reason` is `snake_case` on the wire, per the `REQ-MCP-06` vocabulary.
 /// A `ByteBudget` here would be a contract violation.
 #[test]
 fn stopped_reason_uses_the_agreed_snake_case_vocabulary() {
@@ -416,7 +416,7 @@ fn every_grep_match_carries_a_byte_offset() {
     )
     .expect("grep_archive");
     let matches = env["data"]["matches"].as_array().expect("matches array");
-    assert!(!matches.is_empty());
+    assert_ne!(matches.len(), 0);
     for m in matches {
         assert!(m["byte_offset"].is_u64(), "match missing byte_offset: {m}");
         assert!(m["line"].is_u64(), "match missing line: {m}");
@@ -511,7 +511,7 @@ fn the_empty_result_has_the_same_shape_as_a_successful_one() {
         );
         assert!(env["data"]["scan"].is_object(), "{label}: `scan` missing");
     }
-    assert!(miss["data"]["matches"].as_array().unwrap().is_empty());
+    assert_eq!(miss["data"]["matches"].as_array().unwrap().len(), 0);
 }
 
 /// When the scan is cut short, `status` must not be `Empty`. `empty` asserts
