@@ -44,7 +44,7 @@ See the [result](../../verification/results/insight-generation.md); the unchange
 
 ## Search pagination components
 
-[pagination.rs tests](../../crates/mcp/src/tools/pagination.rs) verify the eight-session ceiling, idle expiry, single-use cursor replay refusal, and preservation of a pending locator when a too-small response budget is retried with a larger budget.
+[pagination.rs tests](../../crates/mcp/src/tools/pagination.rs) verify the eight-session ceiling, idle expiry, single-use cursor replay refusal, preservation of a pending locator when a too-small response budget is retried with a larger budget, and propagation of the selected archive entry limit while page limits remain independent.
 Run `cargo test -p bugreport-insight-mcp --lib --offline`; [executed results](../../verification/results/search-pagination.md) own the verdict.
 
 ## Collection outcomes and detection failures

@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use bugreport_insight_core::{
-    EntryId, MatchLocator, ScanRequest, ScanSession, ScanStep, StoppedReason, caps,
+    EntryId, MatchLocator, ScanBudget, ScanRequest, ScanSession, ScanStep, StoppedReason, caps,
 };
 use serde_json::{Value, json};
 
@@ -119,13 +119,15 @@ impl ToolHandler for GrepArchive {
                 .ok_or_else(|| invalid("pattern is required for a new search"))?;
             let mode = parse_mode(p.mode.as_deref())
                 .map_err(|m| ToolError::protocol("pattern_mode_unavailable", m))?;
-            let req = ScanRequest::new(pattern, mode).with_scope(
-                p.entry_ids
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(EntryId)
-                    .collect(),
-            );
+            let req = ScanRequest::new(pattern, mode)
+                .with_scope(
+                    p.entry_ids
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(EntryId)
+                        .collect(),
+                )
+                .with_budget(archive_scan_budget(self.ctx.limits()));
             Continuation {
                 scan: ScanSession::new(&self.ctx, req).map_err(|e| ToolError::from_archive(&e))?,
                 pending: None,
@@ -199,6 +201,13 @@ impl ToolHandler for GrepArchive {
     }
 }
 
+fn archive_scan_budget(limits: bugreport_insight_core::ArchiveLimits) -> ScanBudget {
+    ScanBudget {
+        max_entry_bytes: limits.max_entry_bytes,
+        ..ScanBudget::DEFAULT
+    }
+}
+
 fn locator(m: &MatchLocator) -> Value {
     json!({
         "entry_id": m.entry_id.0, "path": m.path, "line": m.line, "line_end": m.line_end,
@@ -268,7 +277,7 @@ fn result_size(env: &ToolEnvelope) -> Result<usize, ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bugreport_insight_core::Archive;
+    use bugreport_insight_core::{Archive, ArchiveLimits};
     use bugreport_insight_test_fixtures::{ZipBuilder, scratch_dir};
     use std::sync::Arc;
 
@@ -323,5 +332,24 @@ mod tests {
         assert_eq!(last.data["matches"][0]["line"], 1);
         assert_eq!(last.data["scan"]["coverage_complete"], true);
         assert!(last.data["next_cursor"].is_null());
+    }
+
+    #[test]
+    fn scan_entry_limit_uses_selected_archive_policy() {
+        let path = scratch_dir().join("page-forced-entry-limit.zip");
+        std::fs::write(&path, ZipBuilder::new().add("text", b"needle\n").finish()).unwrap();
+        let archive = Archive::open_with(path, ArchiveLimits::FORCED).unwrap();
+        let budget = archive_scan_budget(archive.limits());
+
+        assert_eq!(
+            budget.max_entry_bytes,
+            ArchiveLimits::FORCED.max_entry_bytes
+        );
+        assert_eq!(budget.max_matches, ScanBudget::DEFAULT.max_matches);
+        assert_eq!(budget.max_scan_bytes, ScanBudget::DEFAULT.max_scan_bytes);
+        assert_eq!(
+            budget.max_excerpt_bytes,
+            ScanBudget::DEFAULT.max_excerpt_bytes
+        );
     }
 }

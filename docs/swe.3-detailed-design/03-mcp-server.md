@@ -31,6 +31,8 @@ Flat fields keep the tool input schema a root object.
 | read_entry | entry_id and one range pair | entry_id, range and lines or byte excerpt/bytes_returned |
 | grep_archive | new query: pattern, optional mode/entry_ids; continuation: cursor; optional response_budget/scan_budget/max_matches on either | matches, scan coverage and next_cursor |
 
+Each new `grep_archive` session carries `Archive::limits().max_entry_bytes` into `ScanBudget`; the per-page match, scan-byte and excerpt limits remain the MCP defaults. This keeps the selected default or forced archive policy effective during content decoding without changing pagination bounds.
+
 path_prefix matches an exact path or a slash segment boundary after removing trailing slashes; ANR and ANR/ exclude ANR2.
 An empty or slash-only prefix selects all entries; no case folding or dot-segment normalization occurs.
 Paths remain display filters, not keys for reading individual entries.
