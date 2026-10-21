@@ -40,7 +40,7 @@ ADR numbers are permanent identities.
 Use stable descriptive filenames; keep numbered decision identities permanent.
 Documentation describes current contracts, rationale, procedures and verification limits.
 Keep obsolete designs, migration/cleanup reports and completed-work narratives out of this tree.
-Git preserves prior document versions; necessary execution records live under repository-root `verification/`.
+Git preserves prior document versions; execution records may be maintained outside this repository.
 Keep Markdown files within 500 lines; split by subject or examples.
 Use CommonMark-compatible Markdown, descriptive relative links and explicit code-fence languages.
 Write one prose sentence per source line, without hard wrapping within a sentence.
@@ -61,7 +61,7 @@ Record semantic conflicts; editorial changes cannot resolve behavior decisions.
 
 Distinguish candidate tests, inspected assertions, historical runs and fresh results.
 [Strategy](./verification/01-strategy.md) owns selection and reporting conventions.
-Results name revision, date, environment, command/review method, verdict and evidence location; unrun checks remain unrun.
+Results name revision, date, environment, command/review method, verdict and evidence location; unrun checks remain unrun. References to the optional repository-root `verification/` archive are checked when it is present and tolerated when it is omitted.
 Shared source/test links provide reverse traceability; per-function backlinks are unnecessary.
 
 ## Content review

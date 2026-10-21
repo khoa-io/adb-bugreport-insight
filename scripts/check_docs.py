@@ -25,10 +25,13 @@ def anchors(text):
 
 
 def main():
+    # Execution evidence is maintained outside this repository. Keep checking
+    # links to it when a local archive is present, but do not require that archive.
+    evidence_pages = set((ROOT / "verification").rglob("*.md"))
     pages = sorted(set(ROOT.glob("*.md")) | set((ROOT / "docs").rglob("*.md"))
-                   | set((ROOT / "verification").rglob("*.md"))
-                   | set((ROOT / ".agents").rglob("*.md")) | set((ROOT / "memory-bank").rglob("*.md")))
-    errors, checked = [], 0
+                   | evidence_pages | set((ROOT / ".agents").rglob("*.md"))
+                   | set((ROOT / "memory-bank").rglob("*.md")))
+    errors, checked, external_evidence = [], 0, 0
     cache = {p.resolve(): anchors(p.read_text(encoding="utf-8")) for p in pages}
     for page in pages:
         raw = page.read_text(encoding="utf-8")
@@ -48,13 +51,21 @@ def main():
             target = (page.parent / unquote(name)).resolve() if name else page.resolve()
             checked += 1
             if not target.exists():
-                errors.append(f"{page.relative_to(ROOT)}: missing target {destination}")
+                try:
+                    target.relative_to(ROOT / "verification")
+                    external_evidence += 1
+                    continue
+                except ValueError:
+                    errors.append(f"{page.relative_to(ROOT)}: missing target {destination}")
             elif fragment and target.suffix == ".md":
                 if unquote(fragment) not in cache.get(target, set()):
                     errors.append(f"{page.relative_to(ROOT)}: missing anchor {destination}")
     for error in errors:
         print(error, file=sys.stderr)
-    print(f"Checked {len(pages)} Markdown pages and {checked} local links; {len(errors)} errors.")
+    print(
+        f"Checked {len(pages)} Markdown pages and {checked} local links; "
+        f"{external_evidence} external verification references omitted; {len(errors)} errors."
+    )
     return bool(errors)
 
 

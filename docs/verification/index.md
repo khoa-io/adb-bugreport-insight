@@ -12,7 +12,7 @@ Verification measures describe checks; the assessment states which claims the av
 | Component measures | [SWE.5 components](../swe.5-component-and-integration-verification/01-component-verification.md) |
 | Process/integration measures | [SWE.5 integration](../swe.5-component-and-integration-verification/02-integration-and-verification.md) |
 | Requirement acceptance measures | [SWE.6](../swe.6-software-verification/01-requirement-verification.md) |
-| Supporting execution identity and results | [Execution evidence](../../verification/index.md) |
+| Supporting execution identity and results | Maintained separately from this repository; current verdict applicability and open obligations are summarized in the assessment pages above. |
 
 A result applies only to its recorded revision, platform, fixtures and assertions.
 Changes to those inputs require an applicability review or a new run before extending a verdict.
