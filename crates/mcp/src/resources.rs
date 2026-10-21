@@ -2,9 +2,9 @@
 //! No protocol types or artifact generation belong in this provider.
 use bugreport_insight_core::{Archive, ArchiveError};
 use serde_json::Value;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 /// Full resources are returned or refused; never silently truncated.
@@ -43,8 +43,8 @@ pub struct InsightResource {
 #[derive(Debug)]
 pub struct InsightResources {
     archive: Arc<Archive>,
-    root: PathBuf,
-    directory: PathBuf,
+    parent: Result<File, Arc<std::io::Error>>,
+    root_name: std::ffi::OsString,
     sha256: OnceLock<String>,
 }
 impl InsightResources {
@@ -56,12 +56,19 @@ impl InsightResources {
             .unwrap_or(Path::new("."));
         let mut name = std::ffi::OsString::from(".");
         name.push(path.file_stem().unwrap_or_default());
-        let root = parent.join(name);
-        let directory = root.join("insight");
+        let parent_handle = File::open(parent)
+            .and_then(|file| {
+                if file.metadata()?.is_dir() {
+                    Ok(file)
+                } else {
+                    Err(std::io::Error::other("archive parent is not a directory"))
+                }
+            })
+            .map_err(Arc::new);
         Self {
             archive,
-            root,
-            directory,
+            parent: parent_handle,
+            root_name: name,
             sha256: OnceLock::new(),
         }
     }
@@ -82,25 +89,21 @@ impl InsightResources {
         Ok(digest)
     }
 
-    fn present(&self) -> Result<bool, ResourceError> {
-        for directory in [&self.root, &self.directory] {
-            match fs::symlink_metadata(directory) {
-                Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
-                Ok(_) => {
-                    return Err(ResourceError::Invalid(
-                        "artifact directory must be a regular directory, not a symlink".into(),
-                    ));
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Ok(true)
+    fn output_directory(&self) -> Result<Option<File>, ResourceError> {
+        let parent = self
+            .parent
+            .as_ref()
+            .map_err(|error| ResourceError::Io(std::io::Error::other(error.to_string())))?;
+        let Some(root) = open_directory_at(parent, &self.root_name)? else {
+            return Ok(None);
+        };
+        open_directory_at(&root, std::ffi::OsStr::new("insight"))
     }
 
-    fn file_size(&self, name: &str) -> Result<u64, ResourceError> {
-        let metadata = fs::symlink_metadata(self.directory.join(name))?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() {
+    fn file_size(directory: &File, name: &str) -> Result<u64, ResourceError> {
+        let file = open_file_at(directory, name)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
             return Err(ResourceError::Invalid(format!(
                 "{name} is not a regular artifact file"
             )));
@@ -114,22 +117,10 @@ impl InsightResources {
     }
 
     fn read_text(&self, name: &str) -> Result<String, ResourceError> {
-        self.file_size(name)?;
-        let file = File::open(self.directory.join(name))?;
-        let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.len() > MAX_RESOURCE_BYTES {
-            return Err(ResourceError::Invalid(format!(
-                "{name} changed to an invalid or oversized file"
-            )));
-        }
-        let mut bytes = Vec::new();
-        file.take(MAX_RESOURCE_BYTES + 1).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > MAX_RESOURCE_BYTES {
-            return Err(ResourceError::Invalid(format!(
-                "{name} exceeds the 64 MiB resource limit"
-            )));
-        }
-        String::from_utf8(bytes).map_err(|_| ResourceError::Invalid(format!("{name} is not UTF-8")))
+        let directory = self
+            .output_directory()?
+            .ok_or_else(|| ResourceError::NotFound(name.to_owned()))?;
+        read_file_text(&directory, name)
     }
 
     fn validate_json(&self, name: &str, text: &str, digest: &str) -> Result<(), ResourceError> {
@@ -146,15 +137,16 @@ impl InsightResources {
     }
 
     pub fn list(&self) -> Result<Vec<InsightResource>, ResourceError> {
-        if !self.present()? {
+        let Some(directory) = self.output_directory()? else {
             return Ok(Vec::new());
-        }
+        };
         let sizes: Vec<_> = FILES
             .iter()
-            .map(|name| self.file_size(name))
+            .map(|name| Self::file_size(&directory, name))
             .collect::<Result<_, _>>()?;
         let digest = self.digest()?;
-        self.validate_json("system.json", &self.read_text("system.json")?, &digest)?;
+        let system = read_file_text(&directory, "system.json")?;
+        self.validate_json("system.json", &system, &digest)?;
         Ok(FILES
             .into_iter()
             .zip(sizes)
@@ -200,5 +192,152 @@ impl InsightResources {
             },
             text,
         ))
+    }
+}
+
+#[cfg(unix)]
+fn open_directory_at(parent: &File, name: &std::ffi::OsStr) -> Result<Option<File>, ResourceError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let name = std::ffi::CString::new(name.as_bytes())
+        .map_err(|_| ResourceError::Invalid("invalid artifact directory name".into()))?;
+    // SAFETY: the name is NUL-terminated and the parent descriptor remains
+    // alive for the call. O_NOFOLLOW makes the opened handle authoritative.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        let error = std::io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(libc::ENOENT) => Ok(None),
+            Some(libc::ELOOP) | Some(libc::ENOTDIR) => Err(ResourceError::Invalid(
+                "artifact directory must be a regular directory, not a symlink".into(),
+            )),
+            _ => Err(error.into()),
+        };
+    }
+    // SAFETY: openat returned a new owned descriptor.
+    Ok(Some(unsafe { File::from_raw_fd(fd) }))
+}
+
+#[cfg(unix)]
+fn open_file_at(directory: &File, name: &str) -> Result<File, ResourceError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| ResourceError::Invalid("invalid artifact name".into()))?;
+    // SAFETY: the name is NUL-terminated and the directory descriptor remains
+    // alive for the call. O_NOFOLLOW rejects a leaf replaced by a symlink.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ELOOP) {
+            return Err(ResourceError::Invalid(format!(
+                "{name:?} is not a regular artifact file"
+            )));
+        }
+        return Err(error.into());
+    }
+    // SAFETY: openat returned a new owned descriptor.
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+#[cfg(not(unix))]
+fn open_directory_at(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<Option<File>, ResourceError> {
+    Err(ResourceError::Invalid(
+        "race-safe artifact access is unavailable on this platform".into(),
+    ))
+}
+
+#[cfg(not(unix))]
+fn open_file_at(_directory: &File, _name: &str) -> Result<File, ResourceError> {
+    Err(ResourceError::Invalid(
+        "race-safe artifact access is unavailable on this platform".into(),
+    ))
+}
+
+fn read_file_text(directory: &File, name: &str) -> Result<String, ResourceError> {
+    let file = open_file_at(directory, name)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > MAX_RESOURCE_BYTES {
+        return Err(ResourceError::Invalid(format!(
+            "{name} is not a regular or size-bounded artifact file"
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_RESOURCE_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_RESOURCE_BYTES {
+        return Err(ResourceError::Invalid(format!(
+            "{name} exceeds the 64 MiB resource limit"
+        )));
+    }
+    String::from_utf8(bytes).map_err(|_| ResourceError::Invalid(format!("{name} is not UTF-8")))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn pinned_directory_and_nofollow_leaf_reject_replacements() {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let base = std::env::temp_dir().join(format!(
+            "resource-openat-race-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let root = base.join(".report");
+        let live_directory = root.join("insight");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&live_directory).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(live_directory.join("apps.json"), b"inside").unwrap();
+        std::fs::write(outside.join("apps.json"), b"outside").unwrap();
+
+        let parent = File::open(&base).unwrap();
+        let root_handle = open_directory_at(&parent, std::ffi::OsStr::new(".report"))
+            .unwrap()
+            .unwrap();
+        let pinned_directory = open_directory_at(&root_handle, std::ffi::OsStr::new("insight"))
+            .unwrap()
+            .unwrap();
+
+        // Replace the checked path after its directory handle has been opened.
+        // Reads remain rooted in the pinned directory that the provider checked.
+        let moved_directory = root.join("saved-insight");
+        std::fs::rename(&live_directory, &moved_directory).unwrap();
+        symlink(&outside, &live_directory).unwrap();
+        assert_eq!(
+            read_file_text(&pinned_directory, "apps.json").unwrap(),
+            "inside"
+        );
+
+        // A leaf swapped for a symlink after metadata inspection is rejected at
+        // the single open operation; no pathname check/open gap is trusted.
+        let size = InsightResources::file_size(&pinned_directory, "apps.json").unwrap();
+        assert_eq!(size, 6);
+        std::fs::remove_file(moved_directory.join("apps.json")).unwrap();
+        symlink(outside.join("apps.json"), moved_directory.join("apps.json")).unwrap();
+        assert!(matches!(
+            open_file_at(&pinned_directory, "apps.json"),
+            Err(ResourceError::Invalid(_))
+        ));
+
+        std::fs::remove_dir_all(base).unwrap();
     }
 }

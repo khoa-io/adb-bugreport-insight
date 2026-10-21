@@ -5,7 +5,7 @@
 //! JSON-RPC error or a caller-visible tool error, and it has to be testable
 //! without a protocol stack.
 
-use bugreport_insight_core::{ArchiveError, ArchiveStatus, EntryId};
+use bugreport_insight_core::{ArchiveError, ArchiveStatus, EntryId, LimitViolation};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -105,6 +105,10 @@ fn entry_id_of(e: &ArchiveError) -> Option<EntryId> {
         | ArchiveError::UnreadableEntry { id, .. }
         | ArchiveError::ByteRangeOutOfBounds { id, .. }
         | ArchiveError::LineRangeOutOfBounds { id, .. } => Some(*id),
+        ArchiveError::LimitExceeded(LimitViolation::EntryTooLarge { entry_id, .. })
+        | ArchiveError::LimitExceeded(LimitViolation::RatioExceeded { entry_id, .. }) => {
+            Some(*entry_id)
+        }
         _ => None,
     }
 }
@@ -116,6 +120,33 @@ impl std::fmt::Display for ToolError {
 }
 
 impl std::error::Error for ToolError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streaming_limit_errors_keep_the_entry_id_in_structured_data() {
+        let errors = [
+            ArchiveError::LimitExceeded(LimitViolation::EntryTooLarge {
+                entry_id: EntryId(7),
+                found: 11,
+                limit: 10,
+            }),
+            ArchiveError::LimitExceeded(LimitViolation::RatioExceeded {
+                entry_id: EntryId(9),
+                ratio: 101,
+                limit: 100,
+            }),
+        ];
+
+        for (error, expected_id) in errors.iter().zip([7, 9]) {
+            let mapped = ToolError::from_archive(error);
+            assert_eq!(mapped.kind, ToolErrorKind::Domain);
+            assert_eq!(mapped.data.as_ref().unwrap()["entry_id"], expected_id);
+        }
+    }
+}
 
 /// Serialises as the body an agent reads. Used by the adapter and by tests.
 #[derive(Debug, Serialize)]

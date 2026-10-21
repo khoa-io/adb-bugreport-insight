@@ -67,7 +67,7 @@ It requires seven published files, an accurate section locator, null RAM, empty 
 ## MCP insight resources
 
 `ARCH-MCP-RES` provider checks in [resources.rs](../../crates/mcp/tests/resources.rs) run before the CLI-consuming layer.
-Eight checks assert exact bytes/MIME/size/identity, unchanged source/output, no-write absence and late publication, incomplete/foreign sets, selected JSON/README identity, malformed/non-UTF-8 content, size refusal, exact URI rejection and symlink refusal.
+Checks assert exact bytes/MIME/size/identity, unchanged source/output, no-write absence and late publication, incomplete/foreign sets, selected JSON/README identity, malformed/non-UTF-8 content, size refusal, exact URI rejection and symlink refusal. The descriptor-level race test replaces the checked directory and a leaf with symlinks before open; pinned directory handles and no-follow opens keep reads inside the checked sibling tree.
 [Protocol process checks](../../crates/cli/tests/protocol.rs) `mcp_resources_return_all_generated_artifacts_byte_for_byte` and `mcp_missing_resources_are_empty_without_generating_files_and_refresh_after_publication` generate through the actual CLI, then use MCP resource discovery/reads.
 They check every file's complete text and MIME/size, private zero-TTL response metadata, absence without generation, unknown-resource/cursor errors, late publication and the unchanged seven-tool list.
 The existing capability check now expects tools plus read-only resources, with no subscriptions/list-change notifications.

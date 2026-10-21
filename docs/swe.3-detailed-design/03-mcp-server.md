@@ -159,7 +159,7 @@ A prior digest-declining archive-info call cannot erase that mandatory identity;
 `list()` returns `InsightResource` metadata or empty absence, requiring all seven fixed files when the final directory exists.
 `read(uri)` returns one descriptor plus exact text; it accepts no filesystem path, arbitrary filename, encoded traversal, query or foreign archive URI.
 
-The directory and leaf checks reject symlinks and non-regular files.
+The archive parent directory is opened once when the provider is constructed. The fixed artifact root and `insight` directory are opened relative to that pinned handle with no-follow directory opens; every artifact is opened relative to the pinned insight-directory handle with no-follow semantics. Type and size checks use the opened file handle, so replacing a checked pathname cannot redirect a read. This descriptor-relative protection is available on Unix; resource access fails closed on other platforms.
 Both declared length and an actual `Read::take(64 MiB + 1)` guard reject oversized data; UTF-8/JSON/identity failures never return a prefix.
 The system JSON anchors listing identity; selected JSON must identify its own artifact name and archive hash, while README must contain the matching SHA-256 header.
 Missing output is discovered without creating files; malformed/incomplete output is an error rather than a clean empty result.
@@ -172,7 +172,7 @@ Resources do not inherit the archive tools' excerpt cap; their separate complete
 No templates, subscription or list-change capability is advertised.
 SDK symbols were verified against cached rmcp 3.5.0 source; responses use private caching and zero TTL where the negotiated protocol supports them.
 
-[Provider checks](../../crates/mcp/tests/resources.rs) exercise exact bytes, identity, late publication, malformed/missing/symlink/oversized sources and URI rejection.
+[Provider checks](../../crates/mcp/tests/resources.rs) exercise exact bytes, identity, late publication, malformed/missing/symlink/oversized sources and URI rejection. A descriptor-level race regression replaces the checked artifact directory and leaf between inspection and open, proving the pinned directory remains authoritative and symlink leaves are refused.
 [Wire checks](../swe.5-component-and-integration-verification/02-integration-and-verification.md#mcp-insight-resources) exercise CLI generation → MCP resource reads on both supported test protocol versions.
 
 ## Search pages

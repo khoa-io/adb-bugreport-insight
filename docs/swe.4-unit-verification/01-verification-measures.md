@@ -22,6 +22,7 @@ Links identify modules; names identify executable measures.
 | Error/status distinction | [hostile tests](../../crates/core/tests/hostile.rs): `corrupt_entry_is_listable_but_unreadable_never_empty`, `encrypted_entry_is_reported_not_silently_empty`, `empty_versus_unreadable_are_never_conflated`, `scanning_a_missing_entry_id_is_an_error_not_an_empty_result` | Corrupt, encrypted, absent, and empty inputs remain distinguishable |
 | Marker metadata validation | [marker tests](../../crates/core/tests/markers.rs): `valid_markers_remove_one_line_ending_and_preserve_spaces_and_unicode`, `marker_source_boundary_accepts_256_and_withholds_257_without_a_prefix`, `missing_invalid_and_unreadable_markers_are_distinct_and_identity_survives`, `understated_marker_size_is_rejected_by_the_actual_stream_guard` | Exact LF/CRLF removal, preserved spaces/Unicode and exact name lookup; 256/257 boundary, null bad values, source IDs, missing-only format 0, CRC failure and lying metadata remain explicit |
 | Archive format identity | [hostile tests](../../crates/core/tests/hostile.rs): `absent_version_txt_reports_archive_format_0` | Missing version metadata is reported as format 0 |
+| MCP error identity | [`error.rs` mapping test](../../crates/mcp/src/error.rs): `streaming_limit_errors_keep_the_entry_id_in_structured_data` | Entry byte and compression-ratio limit failures retain the nested entry ID in structured domain error data |
 
 ## Execution and completion
 
