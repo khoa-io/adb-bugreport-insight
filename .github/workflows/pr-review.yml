@@ -1,0 +1,40 @@
+name: Pull request review readiness
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-description:
+    name: Validate pull request description
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required sections
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+
+          body = re.sub(r"<!--.*?-->", "", os.environ["PR_BODY"], flags=re.DOTALL)
+          headings = list(re.finditer(r"^##\s+(.+?)\s*$", body, flags=re.MULTILINE))
+          sections = {}
+          for index, heading in enumerate(headings):
+              end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
+              sections[heading.group(1).strip().casefold()] = body[heading.end():end].strip()
+
+          missing = [
+              name for name in ("summary", "testing")
+              if not sections.get(name)
+          ]
+          if missing:
+              print("Please complete the required section(s): " + ", ".join(missing))
+              sys.exit(1)
+
+          print("Pull request description has a summary and testing details.")
+          PY
