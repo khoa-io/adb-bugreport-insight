@@ -1,0 +1,29 @@
+name: Documentation
+
+on:
+  push:
+    branches: ["main-ai"]
+  pull_request:
+    branches: ["main-ai"]
+
+permissions:
+  contents: read
+
+jobs:
+  diagrams:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Markdown links, anchors and presentation conventions
+        run: python3 scripts/check_docs.py
+      - name: Test staged-source hook and failure handling
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Download pinned renderer
+        run: python3 scripts/diagrams.py pull
+      - name: Check diagram freshness, links and notation
+        run: python3 scripts/diagrams.py check
+      - name: Exercise pinned renderer with staged inputs and hook bypass
+        run: DIAGRAM_REAL_RENDERER=1 python3 -m unittest discover -s scripts/tests -p test_real_renderer.py -v

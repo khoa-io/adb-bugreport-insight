@@ -1,0 +1,3 @@
+# Official PlantUML 1.2026.8, Linux amd64. One platform also on Apple silicon.
+image=plantuml/plantuml@sha256:9b9ee6af54a86ea6ac53805e9da4da7fd913711cfe6c19b6ac1a41c398223aeb
+platform=linux/amd64

@@ -1,0 +1,33 @@
+@startuml
+' diagram-type: component
+!include ../../.style/plantuml.iuml
+title Committed component boundaries
+top to bottom direction
+actor "MCP client" as AGENT
+actor "Engineer" as ENGINEER
+artifact "Bugreport ZIP" as ZIP
+artifact "Seven insight files" as FILES
+package "bugreport-insight" {
+ component "ARCH-CLI-FLAGS\nCLI" as CLI
+ component "ARCH-MCP-SRV\nstdio server" as SRV
+ component "ARCH-MCP-TOOLS-ARC\nseven tools" as TOOLS
+ component "ARCH-MCP-RES\ninsight resources" as RES
+ component "ARCH-ARCHIVE\nindex and readers" as CORE
+ component "ARCH-CLI-INSIGHT\ninsight mode" as INSIGHT
+ component "ARCH-INSIGHT-ANALYZERS\nsix domains" as ANALYZERS
+ component "ARCH-INSIGHT-WRITER\nvalidate and publish" as WRITER
+}
+CLI --> SRV : --mcp
+AGENT <--> SRV : JSON-RPC\nover stdio
+SRV --> TOOLS
+SRV --> RES
+RES --> CORE : verify archive identity
+RES --> FILES : bounded read-only access
+TOOLS --> CORE
+ZIP --> CORE : read in place
+ENGINEER --> INSIGHT : --insight BUGREPORT
+INSIGHT --> WRITER
+WRITER --> ANALYZERS
+ANALYZERS --> CORE
+WRITER --> FILES : exclusive atomic publish
+@enduml

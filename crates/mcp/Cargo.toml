@@ -1,0 +1,24 @@
+[package]
+name = "bugreport-insight-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bugreport-insight-core = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+
+# The only crate that may name an `rmcp` symbol (docs/swe.2-architecture/02-components-and-dependencies.md). The
+# adapter module is the single import site; everything below it is protocol-free.
+rmcp = { version = "3.5.0", features = ["server", "transport-io"] }
+
+# Runtime for stdio serving. The current adapter dispatches synchronously;
+# see docs/swe.2-architecture/03-runtime-and-interactions.md.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
+
+[dev-dependencies]
+bugreport-insight-test-fixtures = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros", "process"] }

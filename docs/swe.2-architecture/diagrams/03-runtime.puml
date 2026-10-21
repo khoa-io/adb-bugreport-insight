@@ -1,0 +1,48 @@
+@startuml
+' diagram-type: sequence
+!include ../../.style/plantuml.iuml
+title Current startup and request interactions
+participant "MCP client" as C
+participant CLI as L
+participant "MCP server" as S
+participant "Core archive" as A
+participant "Insight writer" as W
+participant "Six analyzers" as D
+participant "Insight resources" as R
+participant Filesystem as F
+alt MCP mode
+L -> S : serve with archive path
+S -> A : open ZIP and index metadata
+A --> S : Archive or startup error
+note over S : start stdio only after open succeeds
+C -> S : tools/call with typed parameters
+S -> A : metadata query or fresh content reader
+A --> S : value or ArchiveError
+S --> C : ToolEnvelope or error
+C -> S : resources/list
+S -> R : discover complete sibling set
+R -> A : bound archive SHA-256
+R -> F : metadata + system identity
+R --> S : seven descriptors or absence/error
+S --> C : resource metadata
+C -> S : resources/read with returned URI
+S -> R : read exact artifact
+R -> F : bounded UTF-8 read + identity check
+R --> S : full text or explicit error
+S --> C : resource contents
+C -> S : stdin EOF
+S --> L : service completion
+else Insight mode
+L -> W : generate_to(path)
+W -> A : open ZIP
+W -> F : reserve unique staging
+W -> D : generate_insight(Archive)
+D -> A : bounded read-only evidence
+D --> W : six artifact models + README
+W -> W : validate contracts
+W -> F : create and sync seven files
+W -> F : atomic rename, no replacement
+F --> W : published path or error
+W --> L : result; cleanup owned staging on error
+end
+@enduml

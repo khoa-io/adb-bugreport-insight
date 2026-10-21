@@ -1,0 +1,19 @@
+@startuml
+' diagram-type: usecase
+!include ../../.style/plantuml.iuml
+title Committed use cases
+left to right direction
+actor Engineer as E
+actor "AI agent" as A
+actor "CI job" as CI
+rectangle "bugreport-insight — committed archive, MCP, and insight scope" {
+ usecase "UC-01\nInspect a bugreport through MCP" as U1
+ usecase "UC-02\nSearch with bounded context" as U2
+ usecase "UC-03\nGenerate static insight artifacts" as U3
+}
+E --> U1
+A --> U1
+A --> U2
+E --> U3
+CI --> U3
+@enduml

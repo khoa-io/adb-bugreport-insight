@@ -1,0 +1,20 @@
+@startuml
+' diagram-type: usecase
+!include ../../.style/plantuml.iuml
+title Deferred use cases — proposal only
+left to right direction
+actor Engineer as ENG
+actor "CI job" as CI
+actor "Third-party developer" as DEV
+actor Researcher as RSCH
+rectangle "bugreport-insight — deferred analysis/artifact scope" {
+ usecase "DRAFT-UC-03\nStatic report triage" as UC3
+ usecase "DRAFT-UC-04\nRegression artifacts" as UC4
+ usecase "DRAFT-UC-05\nScanner subcommand" as UC5
+ usecase "DRAFT-UC-06\nNDJSON batch processing" as UC6
+}
+ENG --> UC3
+CI --> UC4
+DEV --> UC5
+RSCH --> UC6
+@enduml
