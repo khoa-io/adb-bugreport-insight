@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/mcp",
+    "crates/cli",
+    "crates/test-fixtures",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+bugreport-insight-core = { path = "crates/core" }
+bugreport-insight-mcp = { path = "crates/mcp" }
+# Dev-dependency of `mcp` and `cli` only: the one hand-written ZIP writer both
+# integration suites build their fixtures with.
+bugreport-insight-test-fixtures = { path = "crates/test-fixtures" }
+clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+libc = "0.2"
+thiserror = "2.0"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+grep-matcher = "0.1.9"
+grep-regex = "0.1.14"
+grep-pcre2 = "0.1.10"
+grep-searcher = "0.1.17"
+grep-printer = "0.3.1"
+rmcp = { version = "3.5.0", features = ["server", "transport-io"] }
+
+# rmcp's own schema dependency, declared directly so `tools/params.rs` can
+# derive `JsonSchema` without naming an `rmcp` symbol. Resolves to the same
+# 1.2.2 rmcp uses, so the generated schemas are the same types.
+schemars = "1.0"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }

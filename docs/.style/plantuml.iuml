@@ -1,0 +1,16 @@
+' Local shared style; changing this file regenerates all diagrams.
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "DejaVu Sans"
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam ArrowColor #334155
+skinparam LineColor #334155
+skinparam PackageBorderColor #64748B
+skinparam PackageBackgroundColor #F8FAFC
+skinparam ComponentBackgroundColor #E0F2FE
+skinparam UsecaseBackgroundColor #E0F2FE
+skinparam ClassBackgroundColor #F1F5F9
+skinparam StateBackgroundColor #E0F2FE
+skinparam sequenceMessageAlign center
+hide footbox

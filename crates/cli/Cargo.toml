@@ -1,0 +1,20 @@
+[package]
+name = "bugreport-insight-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "bugreport-insight"
+path = "src/main.rs"
+
+[dependencies]
+# CLI composes core and MCP libraries; MCP owns protocol adaptation (REQ-MCP-01).
+# Argument parsing and mode selection stay here; rmcp symbols stay in MCP.
+bugreport-insight-mcp = { workspace = true }
+bugreport-insight-core = { workspace = true }
+clap = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+bugreport-insight-test-fixtures = { workspace = true }
+serde_json = { workspace = true }

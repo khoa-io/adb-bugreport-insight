@@ -1,0 +1,9 @@
+[package]
+name = "bugreport-insight-test-fixtures"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# No dependencies, deliberately. These fixtures are hand-written bytes, so a
+# dependency here would let the writer and the reader under test share a bug.
+# `std` only.
