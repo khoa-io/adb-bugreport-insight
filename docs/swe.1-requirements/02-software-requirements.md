@@ -189,7 +189,9 @@ This section defines server scope, tool contracts and evidence constraints.
   `--mcp --insight FILE` exposes the archive tools and insight tools for that one file; `--mcp --insight DIRECTORY` exposes insight discovery and insight access for immediate bugreport ZIP children only.
   Directory discovery never recurses, searches parents, follows child symlinks, or accepts tool-supplied filesystem paths; archive selection uses identifiers returned by discovery.
   Directory sessions pin an opened directory and open regular children relative to that handle without following symlinks, so a path replacement cannot redirect a later content read.
-  Directory mode requires the Unix descriptor-relative implementation; other platforms fail startup explicitly as unsupported while single-file mode remains available.
+  Directory mode requires a descriptor-relative implementation: Unix pins a directory descriptor and Windows pins a directory handle that enumerates through `GetFileInformationByHandleEx` and opens children with `FILE_FLAG_OPEN_REPARSE_POINT`.
+  Both refuse a child symlink or reparse point rather than following it, and both keep serving the pinned directory after it is renamed.
+  Platforms with neither implementation fail startup explicitly as unsupported while single-file mode remains available.
   A ZIP extension alone is insufficient: detection requires a root non-directory/non-symlink `main_entry.txt` or `bugreport*.txt` ZIP entry; `version.txt` alone is insufficient, and no payload is extracted to disk.
   Invalid, ordinary, nested-directory and symlink ZIP candidates are excluded; discovery reports bounded results and explicit admission failures rather than silently treating over-limit bugreports as absent.
   `list_bugreports` provides discovery (at most 1,000 directory entries inspected, 200 total accepted/rejected records); `list_insights` lists the seven generated artifact names; `read_insight` reads a selected README/domain artifact generated in memory, reusing committed artifact/evidence contracts.
@@ -199,9 +201,21 @@ This section defines server scope, tool contracts and evidence constraints.
   Selection outside the discovered scope, unknown artifact names and analysis failures produce explicit structured errors.
   <a id="req-mcp-13"></a> ([`REQ-MCP-13`](../traceability.md#req-mcp-13))
 
+- **Archive tools for selected directory reports.**
+  `--mcp --insight DIRECTORY` exposes the existing seven archive tools alongside the three insight tools.
+  Every archive tool accepts an optional exact `bugreport` basename; use an identifier from `list_bugreports` when it is present, and never pass a filesystem path.
+  In a directory session, an omitted selector is resolved only when complete discovery finds exactly one eligible report; no eligible report returns `no_bugreports`, while multiple reports or incomplete discovery returns `bugreport_required`.
+  A supplied selector must resolve to a recognized immediate regular ZIP under the pinned directory, with the existing no-follow and marker checks.
+  In a bound-file session, omission continues to use that file and a supplied selector must match its basename.
+  Each successful directory archive-tool result includes the selected basename; `entry_id` values are local to that report, and every `grep_archive` continuation must retain the same selector.
+  Content confirmation remains in the session's shared 64-token pool and also binds to the retained report-context generation, so reopening a basename cannot reuse an approval for an earlier archive snapshot.
+  Existing read-only, archive safety, result-bound and per-call content-confirmation contracts remain in force.
+  The server retains at most eight pinned archive-tool contexts; idle contexts expire after 300 seconds, and a full active cache returns an explicit `archive_context_capacity` error.
+  <a id="req-mcp-14"></a> ([`REQ-MCP-14`](../traceability.md#req-mcp-14))
+
 ## MCP tools
 
-Each archive tool is a product capability with its own ID; the three insight tools share REQ-MCP-13.
+Each archive tool is a product capability with its own ID; REQ-MCP-13 covers the three insight tools and REQ-MCP-14 covers archive selection in directory sessions.
 Seven tools map one-to-one to `crates/core` listing, reading, finding, grepping and metadata; **none runs an analyzer**.
 The [tool allocation](./allocations/03-mcp-tools.md) summarizes this table; the shared constraints below complete the tool obligations.
 
@@ -340,6 +354,7 @@ Ratings do not downgrade known conflicts.
 | [REQ-MCP-11](#req-mcp-11) | medium |
 | [REQ-MCP-12](#req-mcp-12) | high |
 | [REQ-MCP-13](#req-mcp-13) | high |
+| [REQ-MCP-14](#req-mcp-14) | high |
 | [REQ-MCP-ARC-01](#req-mcp-arc-01) | medium |
 | [REQ-MCP-ARC-02](#req-mcp-arc-02) | medium |
 | [REQ-MCP-ARC-03](#req-mcp-arc-03) | medium |

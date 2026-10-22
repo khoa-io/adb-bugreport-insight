@@ -62,7 +62,8 @@ The destination is `<parent>/.<file-stem>/insight/`.
 An existing regular sibling root may contain other files; an existing final destination or a symlink sibling root is refused.
 `Stage::new` creates an exclusively owned `.insight-stage-<pid>-<serial>` directory inside that root.
 All seven files are written with `create_new`, synchronized, and published through one directory rename.
-macOS uses `renamex_np(RENAME_EXCL)`; Linux uses `renameat2(RENAME_NOREPLACE)`; Windows uses directory rename semantics that refuse an existing target.
+macOS uses `renamex_np(RENAME_EXCL)`; Linux uses `renameat2(RENAME_NOREPLACE)`; Windows renames through the source directory handle with `SetFileInformationByHandle(FileRenameInfo)`, which refuses an existing target.
+`fs::rename` is not used on Windows because it replaces an existing directory.
 Other targets return Unsupported rather than offer a racy overwrite fallback.
 Even a racing empty destination survives unchanged.
 

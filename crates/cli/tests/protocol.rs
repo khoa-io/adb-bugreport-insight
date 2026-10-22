@@ -450,6 +450,14 @@ fn client_disconnect_exits_zero() {
     );
 }
 
+/// Broken stdout must fail the process with a transport diagnostic.
+///
+/// The response-pipe monitor is Unix-only: it watches stdout for a closed
+/// pipe, which is how a broken response channel is detected here. The
+/// non-Unix monitor does not detect response-pipe closure, so that native
+/// behaviour stays an open obligation rather than an assertion
+/// (`docs/verification/03-open-qualification.md#transport-exits`).
+#[cfg(unix)]
 #[test]
 fn broken_stdout_after_initialization_exits_nonzero_with_transport_diagnostic() {
     let mut server = Server::start(&good_archive());
@@ -1671,7 +1679,7 @@ fn combined_file_mode_exposes_insight_tools_without_publishing_artifacts() {
 }
 
 #[test]
-fn combined_directory_mode_discovers_only_immediate_bugreport_zips_and_denies_escape() {
+fn combined_directory_mode_exposes_archive_and_insight_tools_for_discovered_reports() {
     let root = bugreport_insight_test_fixtures::scratch_dir().join("combined-directory-process");
     let directory = root.join("allowed");
     let nested = directory.join("nested");
@@ -1712,7 +1720,21 @@ fn combined_directory_mode_discovers_only_immediate_bugreport_zips_and_denies_es
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     names.sort_unstable();
-    assert_eq!(names, ["list_bugreports", "list_insights", "read_insight"]);
+    assert_eq!(
+        names,
+        [
+            "archive_info",
+            "entry_info",
+            "find_by_type",
+            "find_entries",
+            "grep_archive",
+            "list_bugreports",
+            "list_entries",
+            "list_insights",
+            "read_entry",
+            "read_insight",
+        ]
+    );
     let reports = server.envelope("list_bugreports", json!({}));
     assert_eq!(reports["data"]["bugreports"].as_array().unwrap().len(), 1);
     assert_eq!(reports["data"]["bugreports"][0]["bugreport"], "inside.ZIP");

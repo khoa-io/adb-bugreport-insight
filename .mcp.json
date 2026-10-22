@@ -1,0 +1,17 @@
+{
+	"mcpServers": {
+		"bugreport-insight": {
+			"type": "stdio",
+			"command": "cargo",
+			"args": [
+				"run",
+			  "--bin",
+				"bugreport-insight",
+				"--",
+				"--mcp",
+				"--insight",
+				"."
+			]
+		}
+	}
+}

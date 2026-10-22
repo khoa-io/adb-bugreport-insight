@@ -54,6 +54,12 @@ They exercise clean misses, clipped matches, partial/all-failed scopes, director
 Run `cargo test -p bugreport-insight-mcp --test tools --offline`; [execution evidence](../../verification/results/empty-and-detection-outcomes.md) records actual verdicts.
 Core detection heuristics and readers are unchanged, so existing core suites provide regression coverage rather than new core-unit behavior.
 
+## Directory archive dispatch
+
+REQ-MCP-14 component verification is pending.
+The MCP component checks must exercise all seven registry handlers through the directory provider, verify the `bugreport` schema field, and show that selected entry IDs and grep cursors remain report-local while confirmation tokens bind to the shared 64-token pool and context generation.
+They must also cover explicit foreign/path selectors, one-report omission, ambiguous and truncated catalogs, complete empty discovery, report recognition and the eight-context expiry/capacity policy.
+
 ## Range boundaries and subtree filters
 
 [ADR 0012 evidence](../../verification/results/range-boundaries.md) records core partial-read/strict-read and safety checks, component EOF/reversed/empty/unterminated cases, subtree segment boundaries and the real stdio flow.

@@ -20,6 +20,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveInfoParams {
+    /// Optional exact bugreport basename in directory mode; use a listed identifier when present.
+    /// Omit for a bound ZIP; if supplied there, it must match that ZIP's basename.
+    #[serde(default)]
+    pub bugreport: Option<String>,
     /// Single-use token from confirmation_required; omit to preview cost without executing.
     pub confirmation: Option<String>,
     /// Hash the whole stored ZIP when the shared digest choice is not yet cached.
@@ -31,6 +35,10 @@ pub struct ArchiveInfoParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListEntriesParams {
+    /// Optional exact bugreport basename in directory mode; use a listed identifier when present.
+    /// Omit for a bound ZIP; if supplied there, it must match that ZIP's basename.
+    #[serde(default)]
+    pub bugreport: Option<String>,
     /// Enumerate one subtree: `ANR` and `ANR/` exclude `ANR2`. Empty selects all.
     /// Purely a display convenience:
     /// entries are still addressed by `entry_id` in the result.
@@ -43,6 +51,10 @@ pub struct ListEntriesParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FindEntriesParams {
+    /// Optional exact bugreport basename in directory mode; use a listed identifier when present.
+    /// Omit for a bound ZIP; if supplied there, it must match that ZIP's basename.
+    #[serde(default)]
+    pub bugreport: Option<String>,
     /// Glob against the entry path. `*` does not cross `/`.
     pub pattern: String,
     /// `glob` (default) or `literal`. `regex` is a typed refusal —
@@ -57,6 +69,10 @@ pub struct FindEntriesParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EntryInfoParams {
+    /// Optional exact bugreport basename in directory mode; use a listed identifier when present.
+    /// Omit for a bound ZIP; if supplied there, it must match that ZIP's basename.
+    #[serde(default)]
+    pub bugreport: Option<String>,
     /// Single-use token from confirmation_required; omit to preview cost without executing.
     pub confirmation: Option<String>,
     /// Index id from `list_entries` or `find_entries`. Never a path.
@@ -67,6 +83,10 @@ pub struct EntryInfoParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FindByTypeParams {
+    /// Optional exact bugreport basename in directory mode; use a listed identifier when present.
+    /// Omit for a bound ZIP; if supplied there, it must match that ZIP's basename.
+    #[serde(default)]
+    pub bugreport: Option<String>,
     /// Single-use token from confirmation_required; omit to preview cost without executing.
     pub confirmation: Option<String>,
     /// A `ContentType` name, e.g. `text`, `image_png`, `binary`, `unknown`.
@@ -89,6 +109,10 @@ pub struct FindByTypeParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadEntryParams {
+    /// Optional exact bugreport basename in directory mode; use a listed identifier when present.
+    /// Omit for a bound ZIP; if supplied there, it must match that ZIP's basename.
+    #[serde(default)]
+    pub bugreport: Option<String>,
     /// Single-use token from confirmation_required; omit to preview cost without executing.
     pub confirmation: Option<String>,
     /// Index id from `list_entries` or `find_entries`. Never a path.
@@ -147,6 +171,11 @@ pub enum RangeParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GrepArchiveParams {
+    /// Optional exact bugreport basename in directory mode; use a listed identifier when present.
+    /// Include it on every continuation when multiple reports are available.
+    /// Omit for a bound ZIP or when directory mode has exactly one report.
+    #[serde(default)]
+    pub bugreport: Option<String>,
     /// Single-use token from confirmation_required; omit to preview cost without executing.
     pub confirmation: Option<String>,
     /// Literal text or glob, per `mode`.

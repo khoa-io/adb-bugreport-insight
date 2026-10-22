@@ -25,12 +25,21 @@ pub trait ToolHandler: Send + Sync {
 /// name set and schemas. Every handler shares the same `Arc<Archive>`: one
 /// immutable index; grep additionally owns bounded continuation state.
 pub fn registry(ctx: Ctx) -> Vec<Box<dyn ToolHandler>> {
-    let gate = Arc::new(ConfirmationGate::default());
+    registry_with_gate(ctx, Arc::new(ConfirmationGate::default()), None)
+}
+
+/// Build one archive's handlers on the same request-approval state.
+pub(crate) fn registry_with_gate(
+    ctx: Ctx,
+    gate: Arc<ConfirmationGate>,
+    confirmation_scope: Option<Value>,
+) -> Vec<Box<dyn ToolHandler>> {
     let gated = |inner: Box<dyn ToolHandler>| -> Box<dyn ToolHandler> {
         Box::new(GatedTool {
             inner,
             ctx: ctx.clone(),
             gate: gate.clone(),
+            confirmation_scope: confirmation_scope.clone(),
         })
     };
     vec![
@@ -49,6 +58,7 @@ struct GatedTool {
     inner: Box<dyn ToolHandler>,
     ctx: Ctx,
     gate: Arc<ConfirmationGate>,
+    confirmation_scope: Option<Value>,
 }
 
 impl ToolHandler for GatedTool {
@@ -74,9 +84,15 @@ impl ToolHandler for GatedTool {
                 ));
             }
         };
+        let mut bound_arguments = params.clone();
+        if let Some(scope) = &self.confirmation_scope
+            && let Some(arguments) = bound_arguments.as_object_mut()
+        {
+            arguments.insert("_bugreport_insight_context".into(), scope.clone());
+        }
         self.gate.check(
             self.name(),
-            &params,
+            &bound_arguments,
             token.as_deref(),
             tool_cost(&self.ctx, self.name(), &params),
         )?;
@@ -123,6 +139,7 @@ mod tests {
             inner: Box::new(CountingTool(count.clone())),
             ctx: Arc::new(bugreport_insight_core::Archive::open(&path).unwrap()),
             gate: Arc::new(ConfirmationGate::default()),
+            confirmation_scope: None,
         };
         let mut arguments = json!({"entry_id":7,"byte_start":0,"byte_end":10});
         let error = tool.call(arguments.clone()).unwrap_err();

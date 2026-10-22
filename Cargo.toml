@@ -22,6 +22,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 libc = "0.2"
 thiserror = "2.0"
+# Windows-only handle-relative directory access; unused on other targets.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 grep-matcher = "0.1.9"
 grep-regex = "0.1.14"

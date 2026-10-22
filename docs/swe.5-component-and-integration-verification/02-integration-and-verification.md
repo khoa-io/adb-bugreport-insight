@@ -108,6 +108,13 @@ The resulting ServeError::ServerTask is separately mapped to exit 1 by the CLI u
 This composed boundary evidence does not inject a panic into the released executable or demonstrate a native non-Unix response-pipe failure.
 [The executed correction](../../verification/results/server-task-failures.md) records the failing nested-task case and current results under REQ-CLI-03/05 and ARCH-MCP-SRV/ARCH-CLI-FLAGS.
 
+## Directory archive tool wire checks
+
+REQ-MCP-14 process verification is pending.
+The directory-mode protocol exchange must discover ten unique tools, inspect each archive schema for optional `bugreport`, select reports returned by `list_bugreports`, and exercise at least one index query and one confirmed content query per report.
+It must show that results identify their report, entry IDs and grep continuation remain report-local, a cursor cannot switch reports, ambiguous or truncated discovery requires selection, a bound-file selector mismatch is rejected, same-name context reopening cannot reuse a confirmation token, and archive bytes remain unchanged.
+The existing directory tool-list assertion has been updated for ten names; it has not been executed for this change.
+
 ## Raised limits and combined MCP insight
 
 The real CLI process checks `force_admits_large_entry_count_and_explains_default_rejection` and combined-mode protocol tests exercise CLI → core admission and CLI → MCP → core analysis.

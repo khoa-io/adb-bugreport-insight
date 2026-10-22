@@ -13,12 +13,12 @@ grep-matcher = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 regex-automata = "0.4"
 libc = "0.2"
-
-# Not declared in the root `[workspace.dependencies]`, and the root manifest is
-# owned by another agent, so it is pinned here directly. `sha2 0.10.9` is pure
-# Rust and needs no C toolchain; it replaces `ring` per open item 17 and is the
-# crate `docs/swe.2-architecture/02-components-and-dependencies.md` names for ARCH-ARCHIVE.
+# `sha2 0.10.9` is pure Rust and needs no C toolchain; it replaces `ring` per
+# open item 17 and is the crate named for ARCH-ARCHIVE in the architecture docs.
 sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
 
 [dev-dependencies]
 bugreport-insight-test-fixtures = { workspace = true }

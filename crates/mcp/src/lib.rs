@@ -23,8 +23,11 @@ pub mod registry;
 pub mod resources;
 pub mod server;
 pub mod tools;
+#[cfg(windows)]
+mod winfs;
 
 pub use error::{ToolError, ToolErrorKind};
+pub use insights::DIRECTORY_MODE_UNSUPPORTED;
 pub use registry::{ToolHandler, registry};
 pub use server::{ServeError, serve, serve_with_options};
 pub use tools::envelope::ToolEnvelope;
