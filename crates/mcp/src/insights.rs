@@ -1,6 +1,8 @@
 //! Protocol-free, confined discovery and in-memory insight access.
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bugreport_insight_core::insight::{InsightFile, generate_insight};
 use bugreport_insight_core::{Archive, ArchiveLimits, StoppedReason};
@@ -9,11 +11,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::confirmation::ConfirmationGate;
+use crate::registry::{ToolHandler, registry_with_gate};
 use crate::{ToolEnvelope, ToolError};
 
 const MAX_DISCOVERY: usize = 1000;
 const MAX_LIST: usize = 200;
 const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ARCHIVE_TOOL_CONTEXTS: usize = 8;
+const ARCHIVE_TOOL_CONTEXT_TTL: Duration = Duration::from_secs(300);
+
+/// Why a directory binding cannot be served on this platform.
+///
+/// Directory mode needs descriptor-relative, no-follow child access, which only
+/// the Unix implementation provides (`REQ-MCP-13`). The message is shared with
+/// the CLI so a rejected binding is reported as a startup condition rather
+/// than as a transport failure.
+pub const DIRECTORY_MODE_UNSUPPORTED: &str =
+    "Directory mode requires Unix descriptor-relative file access; use a single ZIP instead";
+
 const ARTIFACTS: [&str; 7] = [
     "README.md",
     "system.json",
@@ -33,7 +48,7 @@ pub struct ListBugreportsParams {}
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListInsightsParams {
-    /// Exact basename returned by list_bugreports; no directory components.
+    /// Exact report basename; no directory components.
     pub bugreport: String,
     /// Single-use token approving this exact operation and its potential analysis cost.
     pub confirmation: Option<String>,
@@ -62,7 +77,6 @@ fn default_page() -> usize {
     16384
 }
 
-#[derive(Debug)]
 struct Cached {
     path: PathBuf,
     sha256: Option<String>,
@@ -70,34 +84,88 @@ struct Cached {
     snapshot_id: String,
 }
 
-/// A fixed file or immediate directory, never a search through ancestors.
+struct CachedArchiveTools {
+    handlers: Arc<Vec<Box<dyn ToolHandler>>>,
+    touched: Instant,
+}
+
+struct ArchiveToolCache {
+    reports: HashMap<String, CachedArchiveTools>,
+    gate: Arc<ConfirmationGate>,
+    next_context_id: u64,
+}
+
+/// The pinned source of a session.
+///
+/// A single-file session pins the file; a directory session pins the
+/// directory and opens children relative to it, so a pathname replacement
+/// cannot redirect a later read.
 #[derive(Debug)]
+enum Pinned {
+    /// A single bound file.
+    File(std::fs::File),
+    /// A bound directory, enumerated through its handle.
+    #[cfg(windows)]
+    Directory(crate::winfs::PinnedDirectory),
+    /// A bound directory, enumerated through its descriptor.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "ios",
+        target_os = "freebsd"
+    ))]
+    Directory(std::fs::File),
+}
+
+/// A fixed file or immediate directory, never a search through ancestors.
 pub(crate) struct Insights {
     bound: PathBuf,
     directory: bool,
-    pinned: std::fs::File,
+    pinned: Pinned,
     limits: ArchiveLimits,
     gate: ConfirmationGate,
     cache: Mutex<Option<Cached>>,
+    archive_tools: Mutex<ArchiveToolCache>,
     generation: std::sync::atomic::AtomicU64,
 }
 impl Insights {
     pub(crate) fn new(path: &Path, limits: ArchiveLimits) -> std::io::Result<Self> {
         let bound = path.canonicalize()?;
-        let pinned = std::fs::File::open(&bound)?;
-        let directory = pinned.metadata()?.is_dir();
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "linux",
-            target_os = "ios",
-            target_os = "freebsd"
-        )))]
-        if directory {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "Secure directory discovery requires Unix pinned directory handles",
-            ));
-        }
+        // The directory case is decided from `metadata` before any handle is
+        // opened: `File::open` on a directory fails on Windows with
+        // `PermissionDenied` (os error 5), which would report the binding
+        // condition as an IO failure instead of the platform condition it is.
+        let directory = std::fs::metadata(&bound)?.is_dir();
+        let pinned = if directory {
+            #[cfg(windows)]
+            {
+                Pinned::Directory(crate::winfs::open_directory(&bound)?)
+            }
+            #[cfg(any(
+                target_os = "macos",
+                target_os = "linux",
+                target_os = "ios",
+                target_os = "freebsd"
+            ))]
+            {
+                Pinned::Directory(std::fs::File::open(&bound)?)
+            }
+            #[cfg(not(any(
+                target_os = "macos",
+                target_os = "linux",
+                target_os = "ios",
+                target_os = "freebsd",
+                windows
+            )))]
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    DIRECTORY_MODE_UNSUPPORTED,
+                ));
+            }
+        } else {
+            Pinned::File(std::fs::File::open(&bound)?)
+        };
 
         Ok(Self {
             bound,
@@ -106,8 +174,171 @@ impl Insights {
             limits,
             gate: ConfirmationGate::default(),
             cache: Mutex::new(None),
+            archive_tools: Mutex::new(ArchiveToolCache {
+                reports: HashMap::new(),
+                gate: Arc::new(ConfirmationGate::default()),
+                next_context_id: 0,
+            }),
             generation: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+
+    /// Dispatch one archive tool against an exact report in the confined catalog.
+    ///
+    /// The selected basename is normalized before dispatch. Confirmation also
+    /// binds to the retained context generation, so reopening a basename cannot
+    /// reuse a token issued for an older archive snapshot.
+    pub(crate) fn archive_tool(
+        &self,
+        name: &str,
+        mut params: Value,
+    ) -> Result<ToolEnvelope, ToolError> {
+        if !self.directory {
+            return Err(ToolError::protocol(
+                "archive_tool_unavailable",
+                "Directory archive tools require a directory-bound insight session",
+            ));
+        }
+        let requested = match params.get("bugreport") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) => Some(id.as_str()),
+            Some(_) => {
+                return Err(ToolError::protocol(
+                    "invalid_params",
+                    "bugreport must be a string basename or null",
+                ));
+            }
+        };
+        let id = self.select_report(requested)?;
+        let arguments = params.as_object_mut().ok_or_else(|| {
+            ToolError::protocol("invalid_params", "tool arguments must be an object")
+        })?;
+        arguments.insert("bugreport".into(), Value::String(id.clone()));
+
+        let handlers = self.archive_tool_handlers(&id)?;
+        let result = handlers
+            .iter()
+            .find(|handler| handler.name() == name)
+            .ok_or_else(|| ToolError::protocol("method_not_found", format!("no tool `{name}`")))
+            .and_then(|handler| handler.call(params));
+        self.touch_archive_tool_context(&id);
+
+        match result {
+            Ok(mut envelope) => {
+                if let Some(data) = envelope.data.as_object_mut() {
+                    data.insert("bugreport".into(), Value::String(id));
+                }
+                Ok(envelope)
+            }
+            Err(mut error) => {
+                if error.kind == crate::ToolErrorKind::Domain {
+                    let data = error.data.get_or_insert_with(|| serde_json::json!({}));
+                    if let Some(object) = data.as_object_mut() {
+                        object.insert("bugreport".into(), Value::String(id));
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn select_report(&self, requested: Option<&str>) -> Result<String, ToolError> {
+        if let Some(id) = requested {
+            return Ok(id.to_owned());
+        }
+
+        let listing = self.list()?;
+        let reports = listing.data["bugreports"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item["bugreport"].as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !listing.truncated && reports.len() == 1 {
+            return Ok(reports[0].clone());
+        }
+        if !listing.truncated && reports.is_empty() {
+            return Err(ToolError::domain(
+                "no_bugreports",
+                "No recognized bugreport ZIPs are available in the bound directory",
+                serde_json::json!({}),
+            ));
+        }
+        Err(ToolError::protocol(
+            "bugreport_required",
+            "Specify the exact `bugreport` basename of an immediate report; use a list_bugreports identifier when available",
+        ))
+    }
+
+    fn archive_tool_handlers(&self, id: &str) -> Result<Arc<Vec<Box<dyn ToolHandler>>>, ToolError> {
+        let mut cache = self.archive_tools.lock().map_err(|_| {
+            ToolError::protocol(
+                "archive_context_unavailable",
+                "Archive context cache unavailable",
+            )
+        })?;
+        cache.reports.retain(|_, context| {
+            context.touched.elapsed() < ARCHIVE_TOOL_CONTEXT_TTL
+                || Arc::strong_count(&context.handlers) > 1
+        });
+        if let Some(context) = cache.reports.get_mut(id) {
+            context.touched = Instant::now();
+            return Ok(Arc::clone(&context.handlers));
+        }
+        if cache.reports.len() >= MAX_ARCHIVE_TOOL_CONTEXTS {
+            return Err(ToolError::domain(
+                "archive_context_capacity",
+                "Eight report contexts are active; finish work or wait for an idle context to expire",
+                serde_json::json!({
+                    "capacity": MAX_ARCHIVE_TOOL_CONTEXTS,
+                    "idle_expiry_seconds": ARCHIVE_TOOL_CONTEXT_TTL.as_secs(),
+                }),
+            ));
+        }
+
+        let file = self.resolve(id)?;
+        let path = self.bound.join(id);
+        let archive = Archive::from_file(file, path, self.limits)
+            .map_err(|error| self.archive_error(&error))?;
+        if !recognized(&archive) {
+            return Err(ToolError::domain(
+                "not_bugreport",
+                "ZIP does not contain recognized bugreport markers",
+                serde_json::json!({ "bugreport": id }),
+            ));
+        }
+        let context_id = cache.next_context_id;
+        cache.next_context_id = cache.next_context_id.checked_add(1).ok_or_else(|| {
+            ToolError::domain(
+                "archive_context_generation_exhausted",
+                "No more report context identifiers are available",
+                serde_json::json!({}),
+            )
+        })?;
+        let handlers = Arc::new(registry_with_gate(
+            Arc::new(archive),
+            Arc::clone(&cache.gate),
+            Some(json!(context_id)),
+        ));
+        cache.reports.insert(
+            id.to_owned(),
+            CachedArchiveTools {
+                handlers: Arc::clone(&handlers),
+                touched: Instant::now(),
+            },
+        );
+        Ok(handlers)
+    }
+
+    fn touch_archive_tool_context(&self, id: &str) {
+        if let Ok(mut cache) = self.archive_tools.lock()
+            && let Some(context) = cache.reports.get_mut(id)
+        {
+            context.touched = Instant::now();
+        }
     }
 
     pub(crate) fn list(&self) -> Result<ToolEnvelope, ToolError> {
@@ -196,11 +427,17 @@ impl Insights {
     ))]
     fn directory_entries(&self) -> Result<Vec<PathBuf>, ToolError> {
         use std::os::fd::AsRawFd;
+        let Pinned::Directory(directory) = &self.pinned else {
+            return Err(ToolError::protocol(
+                "unsupported_directory",
+                DIRECTORY_MODE_UNSUPPORTED,
+            ));
+        };
         // SAFETY: the live pinned descriptor is a directory. Opening "." relative
         // to it creates an independent enumeration offset for concurrent requests.
         let fd = unsafe {
             libc::openat(
-                self.pinned.as_raw_fd(),
+                directory.as_raw_fd(),
                 c".".as_ptr(),
                 libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
             )
@@ -257,16 +494,29 @@ impl Insights {
         }
         Ok(paths)
     }
+    /// Enumerates the pinned directory through its handle.
+    #[cfg(windows)]
+    fn directory_entries(&self) -> Result<Vec<PathBuf>, ToolError> {
+        let Pinned::Directory(directory) = &self.pinned else {
+            return Err(ToolError::protocol(
+                "unsupported_directory",
+                DIRECTORY_MODE_UNSUPPORTED,
+            ));
+        };
+        directory.entries().map_err(io_error)
+    }
+
     #[cfg(not(any(
         target_os = "macos",
         target_os = "linux",
         target_os = "ios",
-        target_os = "freebsd"
+        target_os = "freebsd",
+        windows
     )))]
     fn directory_entries(&self) -> Result<Vec<PathBuf>, ToolError> {
         Err(ToolError::protocol(
             "unsupported_directory",
-            "Secure directory access requires Unix",
+            DIRECTORY_MODE_UNSUPPORTED,
         ))
     }
 
@@ -274,7 +524,7 @@ impl Insights {
         if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\', '\0']) {
             return Err(ToolError::protocol(
                 "invalid_bugreport",
-                "Use an exact basename returned by list_bugreports",
+                "Use an exact immediate ZIP basename; directory paths are not accepted",
             ));
         }
         if !self.directory {
@@ -284,7 +534,13 @@ impl Insights {
                     "Bugreport is outside the bound file",
                 ));
             }
-            return self.pinned.try_clone().map_err(io_error);
+            let Pinned::File(file) = &self.pinned else {
+                return Err(ToolError::protocol(
+                    "unsupported_directory",
+                    DIRECTORY_MODE_UNSUPPORTED,
+                ));
+            };
+            return file.try_clone().map_err(io_error);
         }
         if !Path::new(id)
             .extension()
@@ -295,16 +551,27 @@ impl Insights {
                 "Only immediate ZIP files are discoverable",
             ));
         }
-        #[cfg(unix)]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "ios",
+            target_os = "freebsd"
+        ))]
         {
             use std::os::fd::{AsRawFd, FromRawFd};
+            let Pinned::Directory(directory) = &self.pinned else {
+                return Err(ToolError::protocol(
+                    "unsupported_directory",
+                    DIRECTORY_MODE_UNSUPPORTED,
+                ));
+            };
             let name = std::ffi::CString::new(id)
                 .map_err(|_| ToolError::protocol("invalid_bugreport", "NUL in bugreport name"))?;
             // SAFETY: pinned owns a live directory descriptor and name is NUL terminated.
             // O_NOFOLLOW blocks symlink replacements; O_NONBLOCK avoids FIFO hangs.
             let fd = unsafe {
                 libc::openat(
-                    self.pinned.as_raw_fd(),
+                    directory.as_raw_fd(),
                     name.as_ptr(),
                     libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
                 )
@@ -329,11 +596,36 @@ impl Insights {
             }
             Ok(file)
         }
-        #[cfg(not(unix))]
+        // `FILE_FLAG_OPEN_REPARSE_POINT` means a symlink is opened as itself,
+        // so the reparse-point attribute can refuse it rather than the open
+        // silently following it to another file.
+        #[cfg(windows)]
+        {
+            let Pinned::Directory(directory) = &self.pinned else {
+                return Err(ToolError::protocol(
+                    "unsupported_directory",
+                    DIRECTORY_MODE_UNSUPPORTED,
+                ));
+            };
+            match directory.open_child(id).map_err(io_error)? {
+                Some(file) => Ok(file),
+                None => Err(ToolError::protocol(
+                    "invalid_bugreport",
+                    "Symlink and non-regular bugreports are not allowed",
+                )),
+            }
+        }
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "ios",
+            target_os = "freebsd",
+            windows
+        )))]
         {
             Err(ToolError::protocol(
                 "unsupported_directory",
-                "Secure directory access requires Unix",
+                DIRECTORY_MODE_UNSUPPORTED,
             ))
         }
     }
@@ -809,6 +1101,40 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    /// The Windows session keeps serving the pinned directory after a rename.
+    ///
+    /// The bound pathname is freed by the rename, so a session that re-resolved
+    /// the pathname would start serving whatever took its place. The pinned
+    /// handle keeps serving the directory it was opened on.
+    ///
+    /// The Unix equivalent is `pinned_directory_survives_path_replacement_and_refuses_child_symlinks`,
+    /// which additionally covers the child-symlink case that needs a privilege
+    /// Windows does not grant to an ordinary test process.
+    #[cfg(windows)]
+    #[test]
+    fn pinned_windows_directory_survives_rename() {
+        let root = directory();
+        let bound = root.join("bound");
+        let outside = root.join("outside");
+        std::fs::create_dir(&bound).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        zip(&bound.join("inside.zip"), "bugreport.txt", b"inside");
+        zip(&outside.join("outside.zip"), "bugreport.txt", b"outside");
+        let insights = Insights::new(&bound, ArchiveLimits::DEFAULT).unwrap();
+        let original = root.join("original");
+        std::fs::rename(&bound, &original).unwrap();
+        // The bound pathname is now free. A replacement directory planted
+        // there must not become the session's scope.
+        std::fs::create_dir(&bound).unwrap();
+        zip(&bound.join("planted.zip"), "bugreport.txt", b"planted");
+        let listed = insights.list().unwrap();
+        assert_eq!(listed.data["bugreports"][0]["bugreport"], "inside.zip");
+        assert_eq!(listed.data["bugreports"].as_array().unwrap().len(), 1);
+        approved_list(&insights, "inside.zip").unwrap();
+        assert!(approved_list(&insights, "outside.zip").is_err());
+        assert!(approved_list(&insights, "planted.zip").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

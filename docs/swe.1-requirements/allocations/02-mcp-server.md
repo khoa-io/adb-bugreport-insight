@@ -19,6 +19,7 @@ Records allocation metadata without proving verification; canonical requirements
 | [REQ-MCP-11](../02-software-requirements.md#req-mcp-11) | interfaceRequirement | `mcp_server` | medium | test |
 | [REQ-MCP-12](../02-software-requirements.md#req-mcp-12) | interfaceRequirement | `mcp_server`, `mcp_tools`, `mcp_resources` | high | request-bound/no-IO, lifecycle and real-stdio tests |
 | [REQ-MCP-13](../02-software-requirements.md#req-mcp-13) | interfaceRequirement | `ARCH-MCP-INSIGHT, ARCH-MCP-SRV` | high | boundary and process tests |
+| [REQ-MCP-14](../02-software-requirements.md#req-mcp-14) | interfaceRequirement | `ARCH-MCP-INSIGHT, ARCH-MCP-TOOLS-ARC, ARCH-MCP-SRV` | high | selector confinement, report-local IDs/cursors, confirmation binding, and ten-tool protocol tests |
 
 | Element alias | Type | Responsibility |
 | --- | --- | --- |

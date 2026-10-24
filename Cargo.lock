@@ -99,6 +99,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "windows-sys",
  "zip",
 ]
 
@@ -115,6 +116,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "windows-sys",
 ]
 
 [[package]]

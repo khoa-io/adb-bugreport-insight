@@ -35,7 +35,7 @@ cargo clippy --workspace --all-targets --offline -- -D warnings
 
 Offline commands require dependencies already in the local Cargo cache.
 Repository guidance does not guarantee host cache availability.
-Current [CI](../../.github/workflows/rust.yml) runs `cargo build --verbose` and `cargo test --verbose` on `ubuntu-latest` for pushes/PRs targeting `main-ai`; it does not run the formatting, Clippy, or offline gates and does not provision the private reference archive.
+Current [CI](../../.github/workflows/rust.yml) runs `cargo build --verbose` and `cargo test --verbose` on `ubuntu-latest` for pushes/PRs targeting `main`; it does not run the formatting, Clippy, or offline gates and does not provision the private reference archive.
 
 ## Result records
 

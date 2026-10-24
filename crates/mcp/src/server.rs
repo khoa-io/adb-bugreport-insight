@@ -23,6 +23,14 @@ use crate::diag;
 pub enum ServeError {
     #[error(transparent)]
     Archive(#[from] ArchiveError),
+    /// The requested binding cannot be served on this platform.
+    ///
+    /// This is a startup condition, not a transport failure: the stdio
+    /// transport never started, so reporting it as one would name the wrong
+    /// stage. Distinct from [`Self::Archive`], which is an archive that could
+    /// not be read.
+    #[error("cannot serve {path}: {reason}")]
+    Binding { path: String, reason: String },
     #[error("MCP stdio transport failed to start: {0}")]
     TransportStart(String),
     #[error("MCP server task failed: {0}")]
@@ -58,7 +66,14 @@ pub async fn serve_with_options(
                 path, limits,
             )?)))
         };
-        run(InsightServer::new(path, limits, archive)?).await
+        // A binding this platform cannot serve is a startup condition, so it is
+        // reported as one instead of being folded into a transport failure.
+        let insight_server =
+            InsightServer::new(path, limits, archive).map_err(|error| ServeError::Binding {
+                path: path.display().to_string(),
+                reason: error.to_string(),
+            })?;
+        run(insight_server).await
     } else {
         let archive = Archive::open_with(path, limits)?;
         diag::info(&format!(

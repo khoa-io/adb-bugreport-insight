@@ -126,7 +126,9 @@ This supports ADR 0013 confirmation clauses in the assessment; transport-failure
 | --- | --- |
 | REQ-CLI-12 / REQ-GEN-02 | A synthetic ZIP above the default entry count is refused with the measured limit and `--force` guidance; forced MCP and static insight succeed with a stderr warning and unchanged source bytes/mtime; selected produced-byte ceilings and integrity checks remain enforced. |
 | REQ-MCP-13 | Exact combined CLI syntax launches successfully for file and directory; only immediate qualifying ZIP basenames are discovered, caller paths cannot escape, insight tools require confirmation before generation and return fixed, bounded artifact pages without filesystem writes. |
+| <a id="req-mcp-14"></a>REQ-MCP-14 | Directory discovery exposes ten unique tool names; all seven archive input schemas accept an optional basename. Exercise omitted selection for empty, unique, ambiguous and truncated discovery; reject foreign/path selectors; verify selected-report metadata, entry-local addressing, report-local grep continuation, confirmation binding to the shared 64-token pool and context generation, the eight-context/300-second policy, read-only source preservation and bound-file selector matching. |
 | REQ-MCP-02/04/05/06/10/11/12 / REQ-INSIGHT-01/05 | Existing archive-only discovery/protocol tests remain applicable; combined-mode tests verify new capability discovery, confirmation and paging without relaxing stdout purity or read-only behavior. |
 
 The [targeted result](../../verification/results/force-and-scoped-insight-mcp.md) supplements the historical walkthrough for these changed clauses.
 Unchanged requirements reuse existing fixture evidence with a fresh workspace regression run; native non-Unix transport-failure verification remains outside this change.
+REQ-MCP-14 verification has not yet been executed; no verdict may be inferred from the updated tool-list assertion alone.

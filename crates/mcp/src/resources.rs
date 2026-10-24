@@ -43,10 +43,38 @@ pub struct InsightResource {
 #[derive(Debug)]
 pub struct InsightResources {
     archive: Arc<Archive>,
-    parent: Result<File, Arc<std::io::Error>>,
+    parent: Result<PinnedParent, Arc<std::io::Error>>,
     root_name: std::ffi::OsString,
     sha256: OnceLock<String>,
 }
+
+/// The pinned parent directory of the bound archive.
+///
+/// On Unix this is the opened directory descriptor; on Windows it is the
+/// opened directory handle, which needs `FILE_FLAG_BACKUP_SEMANTICS` because
+/// `File::open` on a directory fails there with `Access is denied`.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "freebsd"
+))]
+type PinnedParent = File;
+
+#[cfg(windows)]
+type PinnedParent = crate::winfs::PinnedDirectory;
+
+/// The pinned directory that holds the generated artifacts.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "freebsd"
+))]
+type OutputDirectory = File;
+
+#[cfg(windows)]
+type OutputDirectory = crate::winfs::PinnedDirectory;
 impl InsightResources {
     pub fn new(archive: Arc<Archive>) -> Self {
         let path = archive.path();
@@ -56,15 +84,7 @@ impl InsightResources {
             .unwrap_or(Path::new("."));
         let mut name = std::ffi::OsString::from(".");
         name.push(path.file_stem().unwrap_or_default());
-        let parent_handle = File::open(parent)
-            .and_then(|file| {
-                if file.metadata()?.is_dir() {
-                    Ok(file)
-                } else {
-                    Err(std::io::Error::other("archive parent is not a directory"))
-                }
-            })
-            .map_err(Arc::new);
+        let parent_handle = open_parent_directory(parent).map_err(Arc::new);
         Self {
             archive,
             parent: parent_handle,
@@ -89,7 +109,7 @@ impl InsightResources {
         Ok(digest)
     }
 
-    fn output_directory(&self) -> Result<Option<File>, ResourceError> {
+    fn output_directory(&self) -> Result<Option<OutputDirectory>, ResourceError> {
         let parent = self
             .parent
             .as_ref()
@@ -100,7 +120,7 @@ impl InsightResources {
         open_directory_at(&root, std::ffi::OsStr::new("insight"))
     }
 
-    fn file_size(directory: &File, name: &str) -> Result<u64, ResourceError> {
+    fn file_size(directory: &OutputDirectory, name: &str) -> Result<u64, ResourceError> {
         let file = open_file_at(directory, name)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() {
@@ -195,8 +215,43 @@ impl InsightResources {
     }
 }
 
-#[cfg(unix)]
-fn open_directory_at(parent: &File, name: &std::ffi::OsStr) -> Result<Option<File>, ResourceError> {
+/// Opens the parent directory of the bound archive.
+///
+/// The archive's parent is a directory, and `File::open` on a directory fails
+/// on Windows, so each platform opens it with the flags it needs.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "freebsd"
+))]
+fn open_parent_directory(parent: &Path) -> std::io::Result<PinnedParent> {
+    let file = File::open(parent)?;
+    if !file.metadata()?.is_dir() {
+        return Err(std::io::Error::other("archive parent is not a directory"));
+    }
+    Ok(file)
+}
+
+/// Opens the parent directory of the bound archive on Windows.
+///
+/// A directory handle needs `FILE_FLAG_BACKUP_SEMANTICS`; without it
+/// `CreateFileW` fails with `ERROR_ACCESS_DENIED`.
+#[cfg(windows)]
+fn open_parent_directory(parent: &Path) -> std::io::Result<PinnedParent> {
+    crate::winfs::open_directory(parent)
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "freebsd"
+))]
+fn open_directory_at(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<Option<OutputDirectory>, ResourceError> {
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
 
@@ -225,7 +280,12 @@ fn open_directory_at(parent: &File, name: &std::ffi::OsStr) -> Result<Option<Fil
     Ok(Some(unsafe { File::from_raw_fd(fd) }))
 }
 
-#[cfg(unix)]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "freebsd"
+))]
 fn open_file_at(directory: &File, name: &str) -> Result<File, ResourceError> {
     use std::os::fd::{AsRawFd, FromRawFd};
     let name = std::ffi::CString::new(name)
@@ -252,7 +312,48 @@ fn open_file_at(directory: &File, name: &str) -> Result<File, ResourceError> {
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-#[cfg(not(unix))]
+/// Opens a child directory relative to the pinned parent.
+///
+/// The child is opened through the parent's handle and checked for the
+/// reparse-point attribute, so a junction planted in place of the artifact
+/// directory is refused rather than followed.
+#[cfg(windows)]
+fn open_directory_at(
+    parent: &PinnedParent,
+    name: &std::ffi::OsStr,
+) -> Result<Option<OutputDirectory>, ResourceError> {
+    let Some(name) = name.to_str() else {
+        return Err(ResourceError::Invalid(
+            "invalid artifact directory name".into(),
+        ));
+    };
+    match parent.open_child_directory(name)? {
+        Some(directory) => Ok(Some(directory)),
+        None => Ok(None),
+    }
+}
+
+/// Opens an artifact file relative to the pinned artifact directory.
+///
+/// A reparse point is refused rather than followed, matching the Unix
+/// no-follow leaf semantics.
+#[cfg(windows)]
+fn open_file_at(directory: &OutputDirectory, name: &str) -> Result<File, ResourceError> {
+    match directory.open_child_file(name)? {
+        Some(file) => Ok(file),
+        None => Err(ResourceError::Invalid(format!(
+            "{name:?} is not a regular artifact file"
+        ))),
+    }
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "freebsd",
+    windows
+)))]
 fn open_directory_at(
     _parent: &File,
     _name: &std::ffi::OsStr,
@@ -262,14 +363,20 @@ fn open_directory_at(
     ))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "freebsd",
+    windows
+)))]
 fn open_file_at(_directory: &File, _name: &str) -> Result<File, ResourceError> {
     Err(ResourceError::Invalid(
         "race-safe artifact access is unavailable on this platform".into(),
     ))
 }
 
-fn read_file_text(directory: &File, name: &str) -> Result<String, ResourceError> {
+fn read_file_text(directory: &OutputDirectory, name: &str) -> Result<String, ResourceError> {
     let file = open_file_at(directory, name)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() > MAX_RESOURCE_BYTES {

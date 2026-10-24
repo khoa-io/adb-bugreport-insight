@@ -34,7 +34,7 @@ Hook setup is per clone; checkout does not install it.
 `render` regenerates all managed diagrams and removes owned orphan images.
 `check` regenerates into scratch, compares exact bytes, checks diagram links/notation and reports stale, missing or orphaned output.
 Repository files and index remain unchanged.
-CI runs the same check on pushes/PRs targeting `main-ai`, including docs/tooling changes, without committing SVGs.
+CI runs the same check on pushes/PRs targeting `main`, including docs/tooling changes, without committing SVGs.
 CI also runs `check_docs.py` for relative links/anchors and documentation presentation conventions, and exercises the real pinned renderer in a disposable Git repository.
 
 ### Pinned rendering environment

@@ -100,3 +100,9 @@ REQ-GEN-02, REQ-CLI-12 and REQ-MCP-13 require selected-policy checks as well as 
 Core checks compare default and forced admission and produced-byte guards, retained text budget boundaries, and unchanged integrity failures.
 MCP checks exercise marker discovery, exact basename addressing, scope confinement, confirmation before generation, fixed artifact names and bounded UTF-8 paging.
 The [targeted execution record](../../verification/results/force-and-scoped-insight-mcp.md) identifies selected test symbols and actual results.
+
+## Directory archive selection
+
+REQ-MCP-14 adds report selection and per-report handler state to `Insights::archive_tool` and `registry_with_gate`.
+Verification remains pending; the unit measures must cover omitted selection for zero, one, multiple and truncated catalogs, basename/path validation, recognition and pinned no-follow opens, report-local grep cursor behavior, request-bound confirmation arguments including context-generation binding, the shared 64-token pool, the eight-context limit and 300-second idle expiry.
+These checks do not replace SWE.5 protocol assertions for exposed tool schemas and successful result payloads.

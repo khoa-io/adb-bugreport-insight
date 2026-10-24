@@ -7,6 +7,14 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::HANDLE;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Storage::FileSystem::{
+    DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_RENAME_INFO, FileRenameInfo,
+    SetFileInformationByHandle,
+};
+
 #[derive(Debug)]
 struct Stage {
     root: PathBuf,
@@ -104,6 +112,9 @@ impl Stage {
             out.write_all(&file.contents)?;
             out.sync_all()?;
         }
+        // The staging directory is synced on Unix, where a directory handle
+        // can be opened for fsync. Windows cannot open a directory this way,
+        // and does not require the directory entry itself to be flushed.
         #[cfg(unix)]
         fs::File::open(&self.path)?.sync_all()?;
         Ok(())
@@ -155,9 +166,77 @@ fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
         Err(io::Error::last_os_error())
     }
 }
+/// Renames `source` to `destination`, refusing an existing target.
+///
+/// `fs::rename` replaces an existing directory on Windows, which would
+/// silently overwrite a previous analysis. `SetFileInformationByHandle` with
+/// `FileRenameInfo` fails when the destination exists, which is the
+/// fail-without-overwrite policy the publication contract requires.
 #[cfg(target_os = "windows")]
 fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+
+    // A directory handle on Windows needs `FILE_FLAG_BACKUP_SEMANTICS`; without
+    // it `CreateFileW` fails with `ERROR_ACCESS_DENIED`. `DELETE` is required
+    // to rename through the handle.
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .access_mode(DELETE)
+        .open(source)?;
+    // `SetFileInformationByHandle` needs an absolute path. The destination
+    // does not exist yet, so its parent is canonicalized and the file name
+    // joined back on. `canonicalize` yields a verbatim (`\\?\`) path, which
+    // is what the rename call expects.
+    let parent = destination
+        .parent()
+        .ok_or_else(|| io::Error::other("destination has no parent directory"))?
+        .canonicalize()?;
+    let name = parent.join(
+        destination
+            .file_name()
+            .ok_or_else(|| io::Error::other("destination has no file name"))?,
+    );
+    let name = name
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+
+    // `FILE_RENAME_INFO` is a variable-length record: a fixed header followed
+    // by the NUL-terminated destination name at `FileName`'s own offset.
+    const NAME_OFFSET: usize = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    let mut buffer = vec![0u8; NAME_OFFSET + name.len() * std::mem::size_of::<u16>()];
+    // SAFETY: the buffer is at least as large as the fixed header.
+    let info = unsafe { &mut *(buffer.as_mut_ptr() as *mut FILE_RENAME_INFO) };
+    info.RootDirectory = std::ptr::null_mut();
+    info.FileNameLength = (name.len() * std::mem::size_of::<u16>()) as u32;
+    // SAFETY: `FileName` starts at `NAME_OFFSET` in the record, and the buffer
+    // holds the full NUL-terminated name from that offset.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!(info.FileName) as *mut u16,
+            name.len(),
+        );
+    }
+
+    // SAFETY: `file` is a live handle and `buffer` is a valid, fully
+    // initialized `FILE_RENAME_INFO` record of the declared size.
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle() as HANDLE,
+            FileRenameInfo,
+            buffer.as_ptr().cast(),
+            buffer.len() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn rename_exclusive(_source: &Path, _destination: &Path) -> io::Result<()> {

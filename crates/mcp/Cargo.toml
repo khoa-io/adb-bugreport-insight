@@ -19,6 +19,9 @@ rmcp = { version = "3.5.0", features = ["server", "transport-io"] }
 # see docs/swe.2-architecture/03-runtime-and-interactions.md.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
 [dev-dependencies]
 bugreport-insight-test-fixtures = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros", "process"] }

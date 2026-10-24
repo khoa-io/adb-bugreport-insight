@@ -10,13 +10,13 @@ Nine committed elements implement archive, MCP, and static insight scope.
 | --- | --- | --- | --- | --- |
 | <a id="arch-archive"></a>[`ARCH-ARCHIVE`](../traceability.md#arch-archive) | `crates/core` | ZIP central-directory index; bounded line, byte-range, and content search; content detection; archive identity | `zip`, `serde`, `serde_json`, `thiserror`, `sha2`, `grep-searcher`, `grep-regex`, `grep-printer` | ✅ |
 | <a id="arch-mcp-srv"></a>[`ARCH-MCP-SRV`](../traceability.md#arch-mcp-srv) | `crates/mcp` | Server lifecycle, stdio transport, confirmation/error wire mapping | `bugreport-insight-core`, `serde`, `serde_json`, `thiserror`, `tokio`, `rmcp` | ✅ |
-| <a id="arch-mcp-tools-arc"></a>[`ARCH-MCP-TOOLS-ARC`](../traceability.md#arch-mcp-tools-arc) | `crates/mcp` | Seven archive tools behind `ToolHandler`, with content-IO confirmation wrappers | `bugreport-insight-core`, `serde`, `serde_json` | ✅ |
+| <a id="arch-mcp-tools-arc"></a>[`ARCH-MCP-TOOLS-ARC`](../traceability.md#arch-mcp-tools-arc) | `crates/mcp` | Seven archive tools behind `ToolHandler`, with optional selection of a report in confined directory sessions and content-IO confirmation wrappers | `bugreport-insight-core`, `serde`, `serde_json` | ✅ |
 | <a id="arch-cli-flags"></a>[`ARCH-CLI-FLAGS`](../traceability.md#arch-cli-flags) | `crates/cli` | The `bugreport-insight` binary: `--mcp`, `--insight`, `--force`, `--help`, `--verbose` | `clap`, `tokio`, `bugreport-insight-mcp` | ✅ |
 | <a id="arch-cli-insight"></a>[`ARCH-CLI-INSIGHT`](../traceability.md#arch-cli-insight) | `crates/cli` | `--insight` mode selection and process outcome mapping | `clap`, `tokio`, `bugreport-insight-core` | ✅ |
 | <a id="arch-insight-analyzers"></a>[`ARCH-INSIGHT-ANALYZERS`](../traceability.md#arch-insight-analyzers) | `crates/core` | Bounded system, apps, ANR, crash, memory, and CPU evidence analysis | Existing core archive API, `serde`, `serde_json`, `chrono`, `regex-automata` | ✅ |
 | <a id="arch-insight-writer"></a>[`ARCH-INSIGHT-WRITER`](../traceability.md#arch-insight-writer) | `crates/core` | Seven artifact structures, serialization, rendering, and staged publication | `ARCH-ARCHIVE`, `ARCH-INSIGHT-ANALYZERS`, `serde`, `serde_json`, `libc` | ✅ |
 | <a id="arch-mcp-res"></a>[`ARCH-MCP-RES`](../traceability.md#arch-mcp-res) | `crates/mcp` | Read-only sibling artifact discovery, bounded exact reads and archive-identity binding | `ARCH-ARCHIVE`, std filesystem, `serde_json`; thin rmcp adapter | ✅ |
-| <a id="arch-mcp-insight"></a>[`ARCH-MCP-INSIGHT`](../traceability.md#arch-mcp-insight) | `crates/mcp` | Confined bugreport discovery, confirmed in-memory analysis and paged insight tools | `ARCH-ARCHIVE`, `ARCH-INSIGHT-ANALYZERS`, `ARCH-INSIGHT-WRITER`, confirmation gate | ✅ |
+| <a id="arch-mcp-insight"></a>[`ARCH-MCP-INSIGHT`](../traceability.md#arch-mcp-insight) | `crates/mcp` | Confined bugreport discovery, report-scoped archive dispatch, confirmed in-memory analysis and paged insight tools | `ARCH-ARCHIVE`, `ARCH-MCP-TOOLS-ARC`, `ARCH-INSIGHT-ANALYZERS`, `ARCH-INSIGHT-WRITER`, confirmation gate | ✅ |
 
 ## Lazy archive validation
 
@@ -78,13 +78,17 @@ Cost previews inspect the immutable index and request limits rather than reading
 
 ## Combined MCP and insight scope
 
-REQ-MCP-13 is allocated to ARCH-MCP-INSIGHT and ARCH-MCP-SRV; REQ-CLI-12 is allocated to ARCH-CLI-FLAGS, ARCH-ARCHIVE and ARCH-INSIGHT-ANALYZERS.
+REQ-MCP-13 is allocated to ARCH-MCP-INSIGHT and ARCH-MCP-SRV; REQ-MCP-14 is allocated to ARCH-MCP-INSIGHT, ARCH-MCP-TOOLS-ARC and ARCH-MCP-SRV; REQ-CLI-12 is allocated to ARCH-CLI-FLAGS, ARCH-ARCHIVE and ARCH-INSIGHT-ANALYZERS.
 The CLI selects the immutable default or raised resource policy before opening archives or starting transport.
 A single-file combined server composes the existing archive handlers/resources with three insight handlers.
-A directory server owns a confined immediate-child catalog and exposes only the three insight handlers; it has no globally selected archive or archive-switching operation.
+A directory server owns a confined immediate-child catalog and exposes the seven archive handlers plus the three insight handlers; it has no global archive selection state.
 Discovery checks central-directory metadata only and never extracts files or traverses nested/parent directories.
 Unix directory sessions pin a directory descriptor and open no-follow regular children relative to it; core retains each admitted file handle for subsequent reads and hashing.
-Other platforms fail directory startup as unsupported rather than providing a pathname-check fallback.
+Windows directory sessions pin a directory handle, enumerate it with `GetFileInformationByHandleEx`, resolve it with `GetFinalPathNameByHandleW` and open children with `FILE_FLAG_OPEN_REPARSE_POINT`; a reparse point is refused rather than followed, and a renamed directory stays the pinned directory.
+Platforms with neither implementation fail directory startup as unsupported rather than providing a pathname-check fallback.
+Each archive tool accepts an optional exact `bugreport` basename; in directory mode omission is accepted only when complete discovery finds one report, and each successful result identifies the selected report because entry IDs are report-local.
+The selected report's open archive context is pinned and retained for up to 300 seconds of inactivity; at most eight contexts are retained, and a full active cache returns an explicit capacity error.
+The per-report handler set keeps grep cursors scoped to that report; confirmation calls share the session's 64-token pool and bind to a process-local context generation as well as the basename, so a reopened basename cannot reuse an older snapshot's token.
 The insight provider validates basename IDs against the catalog before opening a candidate, generates the seven artifacts in memory after confirmation, and caches at most one report's artifacts.
 Existing artifact resource reads remain a separate API for already-published sibling files; insight tools require no publication and perform no filesystem writes.
 This composition preserves crate boundaries, read-only access and stdout protocol integrity.

@@ -216,17 +216,24 @@ bugreport-insight --mcp --insight DIRECTORY
 
 `--mcp` enables the MCP transport/tools; `--insight` enables insight access.
 For a ZIP file, combined mode retains the seven archive tools and adds `list_bugreports`, `list_insights` and `read_insight`.
-For a directory, only these three insight tools are available.
+For a directory, all seven archive tools are available alongside the three insight tools.
 Discovery checks immediate regular ZIP children for bugreport markers/report names; it never visits parents, nested directories or child symlinks.
 Use returned `bugreport` identifiers, not arbitrary filesystem paths.
 
 Call `list_bugreports`, choose a returned identifier, then call `list_insights` and `read_insight`.
+Each archive tool accepts optional `bugreport`.
+In directory mode you may omit it only when complete discovery found exactly one report; with multiple reports or a truncated catalog, specify the exact immediate ZIP basename, using a `list_bugreports` identifier when available.
+Archive results include `data.bugreport`, and entry IDs are scoped to that report.
+Include the same `bugreport` on every `grep_archive` continuation so its cursor stays with the selected archive.
+For a bound ZIP, omit `bugreport` to use the bound file; if supplied, it must match that ZIP's basename.
 Both artifact operations return a confirmation preview first; review it and retry the same arguments with its token.
 They analyze in memory without creating or overwriting an insight directory.
 Read README.md first and then the relevant JSON artifact; `read_insight` defaults to 16 KiB per page, accepts at most 64 KiB and reports continuation byte offsets.
 Inspect completeness fields and discovery rejections; an empty or capped catalog does not establish that every file was a valid report.
 The directory scan inspects at most 1,000 immediate entries and reports at most 200 accepted/rejected records in total.
-Directory mode requires Unix descriptor-relative file access; unsupported platforms reject this mode explicitly and can use a single ZIP instead.
+Directory mode requires descriptor-relative file access: Unix pins a directory descriptor and Windows pins a directory handle.
+Both refuse a child symlink or reparse point rather than following it, and both keep serving the pinned directory after it is renamed.
+Platforms with neither implementation reject this mode explicitly and can use a single ZIP instead.
 For each `read_insight` continuation, send the returned `source_sha256` and `snapshot_id` with `next_byte_start` as `byte_start`; a changed source is an explicit error, so restart at byte zero after selecting the new report revision.
 If `insight_snapshot_expired` reports an evicted artifact cache, restart the artifact at byte zero; do not concatenate pages across independent generations.
 

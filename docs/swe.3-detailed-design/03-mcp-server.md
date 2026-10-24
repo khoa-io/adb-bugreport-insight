@@ -9,7 +9,8 @@ Linking MCP into the CLI executable satisfies the separate-crate requirement; [A
 [Registry](../../crates/mcp/src/registry.rs) returns ToolHandler objects sharing one Arc<Archive>.
 ToolHandler::call accepts serde_json::Value and returns ToolEnvelope or ToolError without rmcp types.
 [Adapter](../../crates/mcp/src/adapter.rs) derives tool routing, invokes the handlers synchronously, and converts their outcomes.
-Ordinary archive mode tools/list returns exactly the seven unique tool names below with descriptions and typed schemas; combined mode adds the insight tools described below; array order is unspecified under [ADR 0011](../decisions/0011-unordered-tool-discovery.md).
+Ordinary archive mode returns exactly the seven archive names; both combined file and directory modes return those seven plus the three insight names, with descriptions and typed schemas.
+Array order is unspecified under [ADR 0011](../decisions/0011-unordered-tool-discovery.md).
 Clients dispatch by name; neither this table nor the handler vector promises discovery order.
 Initialization instructions retain recommended call sequencing under REQ-MCP-11.
 [Runtime design](../swe.2-architecture/03-runtime-and-interactions.md) owns startup, shared-state and IO sequencing.
@@ -23,13 +24,13 @@ Flat fields keep the tool input schema a root object.
 
 | Tool | Parameters | Success data |
 | --- | --- | --- |
-| archive_info | with_sha256, default true in serde decoding | archive identity |
-| list_entries | optional path_prefix and limit | entries, entry_count |
-| find_entries | pattern, optional mode and limit | entries |
-| entry_info | entry_id | entry metadata, detection |
-| find_by_type | content_type, optional limit | matches with entry/detection, failures, omission counts and sample coverage |
-| read_entry | entry_id and one range pair | entry_id, range and lines or byte excerpt/bytes_returned |
-| grep_archive | new query: pattern, optional mode/entry_ids; continuation: cursor; optional response_budget/scan_budget/max_matches on either | matches, scan coverage and next_cursor |
+| archive_info | optional bugreport, with_sha256 defaulting to true | archive identity |
+| list_entries | optional bugreport, path_prefix and limit | entries, entry_count |
+| find_entries | pattern, optional bugreport, mode and limit | entries |
+| entry_info | entry_id, optional bugreport | entry metadata, detection |
+| find_by_type | content_type, optional bugreport and limit | matches with entry/detection, failures, omission counts and sample coverage |
+| read_entry | entry_id, one range pair and optional bugreport | entry_id, range and lines or byte excerpt/bytes_returned |
+| grep_archive | new query: pattern, optional bugreport/mode/entry_ids; continuation: cursor and optional bugreport; optional response_budget/scan_budget/max_matches on either | matches, scan coverage and next_cursor |
 
 Each new `grep_archive` session carries `Archive::limits().max_entry_bytes` into `ScanBudget`; the per-page match, scan-byte and excerpt limits remain the MCP defaults. This keeps the selected default or forced archive policy effective during content decoding without changing pagination bounds.
 
@@ -161,7 +162,8 @@ A prior digest-declining archive-info call cannot erase that mandatory identity;
 `list()` returns `InsightResource` metadata or empty absence, requiring all seven fixed files when the final directory exists.
 `read(uri)` returns one descriptor plus exact text; it accepts no filesystem path, arbitrary filename, encoded traversal, query or foreign archive URI.
 
-The archive parent directory is opened once when the provider is constructed. The fixed artifact root and `insight` directory are opened relative to that pinned handle with no-follow directory opens; every artifact is opened relative to the pinned insight-directory handle with no-follow semantics. Type and size checks use the opened file handle, so replacing a checked pathname cannot redirect a read. This descriptor-relative protection is available on Unix; resource access fails closed on other platforms.
+The archive parent directory is opened once when the provider is constructed. The fixed artifact root and `insight` directory are opened relative to that pinned handle with no-follow directory opens; every artifact is opened relative to the pinned insight-directory handle with no-follow semantics. Type and size checks use the opened file handle, so replacing a checked pathname cannot redirect a read. This descriptor-relative protection is available on Unix and Windows; resource access fails closed on other platforms.
+On Windows the parent is a pinned directory handle: children are opened with `FILE_FLAG_OPEN_REPARSE_POINT` and refused when they carry the reparse-point attribute, and the parent is resolved with `GetFinalPathNameByHandleW` so a renamed directory remains the pinned one.
 Both declared length and an actual `Read::take(64 MiB + 1)` guard reject oversized data; UTF-8/JSON/identity failures never return a prefix.
 The system JSON anchors listing identity; selected JSON must identify its own artifact name and archive hash, while README must contain the matching SHA-256 header.
 Missing output is discovered without creating files; malformed/incomplete output is an error rather than a clean empty result.
@@ -294,8 +296,9 @@ Only regular ZIP children are candidates; child symlinks, nested paths, parent t
 Detection requires a non-directory, non-symlink root `main_entry.txt` or root `bugreport*.txt` entry; `version.txt` alone is insufficient.
 This uses ZIP central-directory metadata and root report names, not the filename extension alone; it neither decompresses markers nor proves report payload integrity.
 A Unix directory session retains an opened directory descriptor, opens an independent descriptor-relative `.` directory cursor and enumerates through `fdopendir`/`readdir`, and opens each candidate with descriptor-relative `openat` and `O_NOFOLLOW | O_NONBLOCK`.
+A Windows directory session retains an opened directory handle, enumerates it through `GetFileInformationByHandleEx` with `FileFullDirectoryInfo`, resolves the handle with `GetFinalPathNameByHandleW` so a renamed directory stays the pinned directory, and opens each candidate with `FILE_FLAG_OPEN_REPARSE_POINT` so a symlink or junction is opened as itself and then refused by its reparse-point attribute.
 The opened file must be regular; its handle is passed to `Archive::from_file`, keeping later independent readers and hashes on the admitted file rather than reopening a replaceable pathname.
-Unsupported platforms reject directory-mode startup explicitly; single-file combined mode remains available.
+Platforms with neither implementation reject directory-mode startup explicitly; single-file combined mode remains available.
 Before a selected candidate is used, it must still satisfy scope, regular-file and archive-admission checks.
 
 | Tool | Arguments | Result and work |
@@ -310,7 +313,7 @@ The cached complete artifact set is at most 64 MiB in aggregate; exceeding that 
 Both artifact methods require request-specific confirmation before analysis or text access, including cache hits; `--force` is not confirmation.
 An offset splitting a UTF-8 character, an out-of-range offset or a page too small for the next character returns `invalid_insight_range`; invalid page budgets are refused.
 At most one report's generated artifact set is cached, limiting retained analysis output while allowing README-first exploration.
-File combined mode retains archive tools/resources and adds these three tools; directory mode exposes these three tools only.
+File combined mode retains archive tools/resources and adds these three tools; directory mode exposes these seven archive tools alongside the three insight tools.
 All source/evidence semantics come from the existing insight generator; the provider does not infer new findings from filenames.
 
 Every successful `read_insight` page includes `data.source_sha256` and `data.snapshot_id`.
@@ -319,3 +322,20 @@ Missing continuation identity is refused; a mismatched digest returns `insight_s
 
 Each cache generation receives a new process-local snapshot ID; after cache eviction or regeneration, `insight_snapshot_expired` requires restarting at byte zero.
 The provider never regenerates an evicted artifact set to satisfy a continuation, because host-run metadata may differ even when source bytes are unchanged.
+
+## Directory archive tools
+
+REQ-MCP-14 is implemented by ARCH-MCP-INSIGHT with ARCH-MCP-TOOLS-ARC and ARCH-MCP-SRV.
+Each of the seven archive input objects has optional `bugreport`, an exact basename selector with no directory components.
+In a file-bound session, omission uses the bound ZIP and a supplied basename must equal its basename.
+In a directory-bound session, omission is accepted only after complete discovery finds exactly one recognized report; otherwise the caller must supply an exact immediate ZIP basename, using a `list_bugreports` identifier when available.
+An empty catalog returns `no_bugreports`; ambiguous or truncated discovery returns `bugreport_required`.
+A selected basename is opened relative to the pinned directory without following links, and the resulting core `Archive` retains that opened descriptor for the lifetime of its report context.
+No tool accepts a path, parent traversal, nested directory, symlink or reparse point.
+Every successful directory archive-tool payload adds `data.bugreport`; entry IDs are meaningful only within that report.
+For grep continuation, the client repeats the same `bugreport` with the cursor and receives that report's existing single-use confirmation flow; a cursor from another report is unknown in the selected handler and cannot redirect the scan.
+The provider retains at most eight per-report handler contexts and their pinned indexes, expiring an idle context after 300 seconds; if all slots are active it returns `archive_context_capacity` without opening another archive.
+This cap also bounds retained grep state to eight report-local handlers, each preserving the existing eight-search and 300-second cursor limits.
+Confirmation arguments include the normalized report basename and process-local archive-context generation, so a token cannot authorize a call against another report or a reopened context with the same basename.
+Directory archive content tools retain the existing session-wide 64-token pool from REQ-MCP-12; the context generation is internal binding metadata and is not part of the public tool schema.
+Index-only list/find tools remain immediate; the five content tools keep their existing per-call confirmation requirement and cost estimates.

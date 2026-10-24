@@ -34,6 +34,7 @@ pub struct ArchiveServer {
     resources: std::sync::Arc<InsightResources>,
     resource_confirmations: std::sync::Arc<crate::confirmation::ConfirmationGate>,
     stored_archive_bytes: u64,
+    bound_bugreport: Option<String>,
 }
 
 impl ArchiveServer {
@@ -43,12 +44,34 @@ impl ArchiveServer {
                 crate::confirmation::ConfirmationGate::default(),
             ),
             stored_archive_bytes: ctx.index().archive_file_size(),
+            bound_bugreport: ctx
+                .path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned),
             resources: std::sync::Arc::new(InsightResources::new(ctx.clone())),
             handlers: std::sync::Arc::new(registry(ctx)),
         }
     }
 
     fn dispatch(&self, name: &str, params: Value) -> Result<ToolEnvelope, ToolError> {
+        match params.get("bugreport") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(bugreport))
+                if self.bound_bugreport.as_deref() == Some(bugreport) => {}
+            Some(Value::String(_)) => {
+                return Err(ToolError::protocol(
+                    "invalid_bugreport",
+                    "bugreport must match the server's bound ZIP basename",
+                ));
+            }
+            Some(_) => {
+                return Err(ToolError::protocol(
+                    "invalid_params",
+                    "bugreport must be a string basename or null",
+                ));
+            }
+        }
         let handler = self
             .handlers
             .iter()
@@ -332,6 +355,7 @@ fn resource_error(error: ResourceError) -> McpError {
 pub const INSTRUCTIONS: &str = "\
 Read-only access to ONE bound Android bugreport ZIP; no extraction or modification.
 Startup reads ZIP metadata. initialize/tools/list do not read payloads or hash the ZIP.
+Each archive tool accepts an optional `bugreport` basename; when supplied, it must match the bound ZIP.
 
 Start with list_entries/find_entries; use archive_info to establish full identity when needed.
 Address entries by entry_id; paths are display filters, never entry-addressing keys.
@@ -383,9 +407,99 @@ impl InsightServer {
             archive,
         })
     }
+
+    async fn archive_tool_call(
+        &self,
+        name: &'static str,
+        params: Value,
+    ) -> Result<CallToolResult, McpError> {
+        if let Some(archive) = &self.archive {
+            return into_result(archive.dispatch(name, params));
+        }
+        let insights = self.insights.clone();
+        let outcome = tokio::task::spawn_blocking(move || insights.archive_tool(name, params))
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        into_result(outcome)
+    }
 }
 #[tool_router]
 impl InsightServer {
+    #[tool(
+        description = "Potentially expensive: optional full stored-ZIP SHA-256 plus two bounded marker reads. Preview returns confirmation_required; retry identical arguments with confirmation token. Directory mode accepts an exact bugreport basename; omission is valid only for one report in a complete catalog."
+    )]
+    async fn archive_info(
+        &self,
+        Parameters(p): Parameters<ArchiveInfoParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.archive_tool_call("archive_info", tool_params(p)?)
+            .await
+    }
+
+    #[tool(
+        description = "Cheap: index only, no content read. Lists ZIP entries with sizes, optionally under one path prefix. Directory mode accepts an exact bugreport basename; omission is valid only for one report in a complete catalog."
+    )]
+    async fn list_entries(
+        &self,
+        Parameters(p): Parameters<ListEntriesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.archive_tool_call("list_entries", tool_params(p)?)
+            .await
+    }
+
+    #[tool(
+        description = "Cheap: index only, no content read. Finds entry paths by glob or literal. Directory mode accepts an exact bugreport basename; omission is valid only for one report in a complete catalog."
+    )]
+    async fn find_entries(
+        &self,
+        Parameters(p): Parameters<FindEntriesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.archive_tool_call("find_entries", tool_params(p)?)
+            .await
+    }
+
+    #[tool(
+        description = "Confirmation required: one 8 KiB detection sample plus ZIP metadata. Directory mode accepts an exact bugreport basename; omission is valid only for one report in a complete catalog."
+    )]
+    async fn entry_info(
+        &self,
+        Parameters(p): Parameters<EntryInfoParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.archive_tool_call("entry_info", tool_params(p)?).await
+    }
+
+    #[tool(
+        description = "Confirmation required: samples each file up to 8 KiB. Directory mode accepts an exact bugreport basename; omission is valid only for one report in a complete catalog."
+    )]
+    async fn find_by_type(
+        &self,
+        Parameters(p): Parameters<FindByTypeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.archive_tool_call("find_by_type", tool_params(p)?)
+            .await
+    }
+
+    #[tool(
+        description = "Confirmation required: reads one bounded line or byte range, including any decompressed prefix. Directory mode accepts an exact bugreport basename; omission is valid only for one report in a complete catalog."
+    )]
+    async fn read_entry(
+        &self,
+        Parameters(p): Parameters<ReadEntryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.archive_tool_call("read_entry", tool_params(p)?).await
+    }
+
+    #[tool(
+        description = "Confirmation required for each page: literal or glob search with bounded matches, source bytes and response size. Repeat the same bugreport basename on every directory-mode continuation; omission is valid only for one report in a complete catalog."
+    )]
+    async fn grep_archive(
+        &self,
+        Parameters(p): Parameters<GrepArchiveParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.archive_tool_call("grep_archive", tool_params(p)?)
+            .await
+    }
+
     #[tool(
         description = "Discover recognized bugreport ZIPs in the bound location only. Metadata only; no recursive or parent search. At most 1000 directory entries and 200 reports/diagnostics; inspect truncation and rejected limit errors."
     )]
@@ -429,24 +543,25 @@ impl InsightServer {
         )
     }
 }
+
+fn tool_params<T: serde::Serialize>(params: T) -> Result<Value, McpError> {
+    serde_json::to_value(params).map_err(|error| {
+        McpError::invalid_params(format!("cannot re-encode parameters: {error}"), None)
+    })
+}
+
 impl rmcp::ServerHandler for InsightServer {
     async fn list_tools(
         &self,
         _: Option<rmcp::model::PaginatedRequestParams>,
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, McpError> {
-        let mut tools = Self::tool_router().list_all();
-        if self.archive.is_some() {
-            tools.extend(ArchiveServer::tool_router().list_all());
-        }
-        Ok(rmcp::model::ListToolsResult::with_all_items(tools))
+        Ok(rmcp::model::ListToolsResult::with_all_items(
+            Self::tool_router().list_all(),
+        ))
     }
     fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
-        Self::tool_router().get(name).cloned().or_else(|| {
-            self.archive
-                .as_ref()
-                .and_then(|a| rmcp::ServerHandler::get_tool(a, name))
-        })
+        Self::tool_router().get(name).cloned()
     }
     async fn call_tool(
         &self,
@@ -456,8 +571,6 @@ impl rmcp::ServerHandler for InsightServer {
         if Self::tool_router().get(&request.name).is_some() {
             let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
             Self::tool_router().call(call).await
-        } else if let Some(archive) = &self.archive {
-            rmcp::ServerHandler::call_tool(archive, request, context).await
         } else {
             Err(McpError::invalid_params(
                 "Unknown tool; use tools/list for this server's capabilities",
@@ -499,6 +612,6 @@ impl rmcp::ServerHandler for InsightServer {
         };
         rmcp::model::ServerConfig::new(capabilities)
             .with_server_info(rmcp::model::Implementation::new("bugreport-insight",env!("CARGO_PKG_VERSION")))
-            .with_instructions(format!("Insight mode: start with list_bugreports; use its exact basename as bugreport. Directory scope is immediate regular ZIP files only, never parents/subdirectories/symlinks. list_insights generates seven artifacts in memory; read_insight pages them. Both require per-request confirmation: retry identical args with confirmation_token from error.data as confirmation only after accepting the analysis cost. Every page requires a new token. Follow next_byte_start, inspect truncation/evidence gaps; absence does not imply device health. No output files are written. For a bound file, the seven archive tools and existing read-only resources remain available with their original confirmations.{}", if self.archive.is_some() { format!("\n{INSTRUCTIONS}") } else { String::new() }))
+            .with_instructions(format!("Insight mode: start with list_bugreports; use its exact basename as bugreport. Directory scope is immediate regular ZIP files only, never parents/subdirectories/symlinks. The seven archive tools are available; pass `bugreport` from discovery when more than one report is present. Omission selects a report only when complete discovery finds exactly one. Each archive result identifies its selected bugreport; entry IDs are local to that report. Grep continuations must retain the same bugreport and cursor. list_insights generates seven artifacts in memory; read_insight pages them. Both require per-request confirmation: retry identical args with confirmation_token from error.data as confirmation only after accepting the analysis cost. Every page requires a new token. Follow next_byte_start, inspect truncation/evidence gaps; absence does not imply device health. No output files are written. For a bound file, the optional bugreport must match the bound ZIP basename and the existing read-only resources remain available with their original confirmations.{}", if self.archive.is_some() { format!("\n{INSTRUCTIONS}") } else { String::new() }))
     }
 }

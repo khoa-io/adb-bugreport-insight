@@ -21,6 +21,7 @@ SWE.1–3 own current contracts; each decision here explains an active constrain
 
 - [0013: Confirmation before content IO](./0013-confirmation-before-content-io.md)
 - [0014: Transport failures and process exits](./0014-transport-failures-and-process-exits.md)
+- [0015: Report-scoped archive tool selection in directory sessions](./0015-directory-archive-tool-selection.md)
 
 Record numbers are permanent.
 Changed consequences do not authorize behavior changes; [requirements](../swe.1-requirements/02-software-requirements.md) own current obligations.
